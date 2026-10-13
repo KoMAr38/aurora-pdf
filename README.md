@@ -43,7 +43,7 @@ api.py       alt grensesnittet kan be om, én metode per handling
 core/        PDF-motoren: arbeidskopi og angre, sider, kommentarer, signering, OCR og serveren
 web/         grensesnittet: HTML, CSS og ni JavaScript-filer uten rammeverk
 resources/   skriften Noto Sans og språkdata for OCR
-scripts/     snarveier og «Åpne med» i Windows
+scripts/     snarveier og PDF-registreringen i Windows
 tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e2e)
 ```
 
@@ -126,7 +126,7 @@ Målt med `tests/e2e/perf.py` i hodeløs Chromium, i en Linux-container med to p
 1_INSTALLER.bat
 ```
 
-Fila finner Python 3.11–3.14 eller tilbyr å installere 3.13 med winget. Så lager den `.venv`, installerer bibliotekene, kjører installasjonssjekken og legger snarveier på skrivebordet og i Start-menyen. Krever Windows 10 eller 11 med Microsoft Edge WebView2, som følger med Windows 11.
+Fila finner Python 3.11–3.14 eller tilbyr å installere 3.13 med winget. Så lager den `.venv`, installerer bibliotekene, kjører installasjonssjekken og legger snarveier på skrivebordet og i Start-menyen. Svares det J på spørsmålet om PDF-filer, kommer Aurora PDF med under «Åpne med» og i Standardapper, og Innstillinger åpnes på siden der det kan velges som standard. Det valget gjør brukeren selv, for Windows lar ikke et program gjøre seg til standard. Krever Windows 10 eller 11 med Microsoft Edge WebView2, som følger med Windows 11.
 
 Resten står i `START_HER.md`.
 

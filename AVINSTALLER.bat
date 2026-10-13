@@ -6,7 +6,7 @@ cd /d "%~dp0"
 set "APPDIR=%~dp0"
 set "APPDIR=%APPDIR:~0,-1%"
 echo.
-echo   Flytter snarveiene til papirkurven og fjerner Aurora PDF fra «Åpne med».
+echo   Flytter snarveiene til papirkurven og fjerner Aurora PDF fra «Åpne med» og standardappene.
 echo   Programmappen og innstillingene i %APPDATA%\AuroraPDF blir liggende.
 echo.
 choice /c JN /n /m "  Fortsette? [J/N] "

@@ -11,11 +11,11 @@
 
 | Fil | Gjør | Tid |
 |---|---|---|
-| `1_INSTALLER.bat` | Finner Python, lager `.venv`, installerer bibliotekene, kjører installasjonssjekken og lager snarveier. Kan kjøres på nytt for å oppdatere | 1–3 min første gang |
+| `1_INSTALLER.bat` | Finner Python, lager `.venv`, installerer bibliotekene, kjører installasjonssjekken, lager snarveier og tilbyr Aurora PDF for PDF-filer. Kan kjøres på nytt for å oppdatere | 1–3 min første gang |
 | `START_MED_KONSOLL.bat` | Starter programmet med et konsollvindu som viser feilmeldinger. En PDF kan slippes på fila | |
 | `2_TESTER.bat` | Installerer pytest og Playwright og kjører alle testene. Ende-til-ende-testene styrer Microsoft Edge | ~2 min |
 | `3_BYGG_EXE.bat` | Lager en frittstående versjon i `dist\Aurora PDF\` med PyInstaller, til en PC uten Python | 1–2 min |
-| `AVINSTALLER.bat` | Flytter snarveiene til papirkurven og fjerner Aurora PDF fra «Åpne med». Programmappen og innstillingene blir liggende | |
+| `AVINSTALLER.bat` | Flytter snarveiene til papirkurven og fjerner Aurora PDF fra «Åpne med» og Standardapper. Programmappen og innstillingene blir liggende | |
 
 Siste linje fra installasjonssjekken skal være:
 
@@ -29,6 +29,7 @@ Siste linje fra `2_TESTER.bat` skal vise `138 passed`.
 
 - Start fra snarveien «Aurora PDF» på skrivebordet eller i Start-menyen
 - Åpne en fil med Ctrl+O, ved å dra den inn i vinduet, eller med «Åpne med» i Filutforsker hvis det ble valgt under installasjonen
+- Skal PDF-filer åpnes i Aurora PDF med dobbeltklikk og vise Aurora-ikonet, velg Aurora PDF som standard i Innstillinger > Apper > Standardapper. Windows lar ikke programmer gjøre det selv. Installasjonen åpner den siden når PDF-spørsmålet besvares med J
 - Språk og tema velges under ⋯ → Innstillinger. Programmet starter på serbisk første gang, og temaet følger Windows til et annet er valgt
 - `?` viser alle hurtigtastene
 

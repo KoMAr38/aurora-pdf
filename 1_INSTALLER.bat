@@ -49,10 +49,13 @@ echo   [4/4] Sjekker at alt virker
 "%VPY%" main.py --selftest || goto :selftest_failed
 
 echo.
-choice /c JN /n /m "  Vise Aurora PDF under «Åpne med» for PDF-filer? [J/N] "
+choice /c JN /n /m "  Tilby Aurora PDF for PDF-filer («Åpne med» og standardapper)? [J/N] "
 set "OPENWITH="
 if not errorlevel 2 set "OPENWITH=-OpenWith"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%APP%scripts\windows.ps1" -App "%APPDIR%" -Action install %OPENWITH% || goto :fail
+rem Windows lets only the user pick the default PDF program, so open Aurora PDF's page in Settings
+if defined OPENWITH echo   Innstillinger åpnes nå. Velg Aurora PDF som standard for PDF der, Windows lar ikke programmer gjøre det selv.
+if defined OPENWITH start "" "ms-settings:defaultapps?registeredAppUser=Aurora%%20PDF"
 
 echo.
 echo   Ferdig. Aurora PDF ligger på skrivebordet og i Start-menyen.
