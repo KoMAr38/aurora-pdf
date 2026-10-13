@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 139 automatiske tester. 42 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 157 automatiske tester. 50 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -49,7 +49,7 @@ tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e
 
 Motoren er PyMuPDF, som bygger på MuPDF. pyHanko lager og kontrollerer sertifikatsignaturene, cryptography lager nøklene til de digitale ID-ene, pdf2docx står for Word-eksporten, og Pillow koder sidebildene. Grensesnittet er vanlig HTML, CSS og JavaScript i et WebView2-vindu fra pywebview. Det har ikke noe byggesteg: filene i `web/` er de som kjører.
 
-Koden er rundt 4 300 linjer Python, 4 000 linjer JavaScript og 1 500 linjer CSS. Testene er 2 900 linjer.
+Koden er rundt 4 400 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS. Testene er 3 300 linjer.
 
 ### Valg som er verdt å se på
 
@@ -57,9 +57,13 @@ Koden er rundt 4 300 linjer Python, 4 000 linjer JavaScript og 1 500 linjer CSS.
 
 **Den åpne filen er en ukryptert arbeidskopi i minnet.** En passordbeskyttet fil åpnes med passordet og redigeres som andre filer. Beskyttelsen, med algoritme, passord og tillatelser, legges på igjen når filen lagres. Uten eierpassordet kan filen bare lagres som kopi, og kopien får de samme begrensningene.
 
-**Bare sidene nær skjermen finnes i nettleseren.** Etter et hopp i et dokument på 400 sider er fire sider levende. De andre er tomme plassholdere med riktig størrelse. Under rask rulling hentes ingen bilder. De skarpe bildene lastes når rullingen stopper, og forespørsler for sider som har gått ut av skjermen, avbrytes.
+**Bare sidene nær skjermen finnes i nettleseren.** Etter et hopp i et dokument på 400 sider er fire sider levende. De andre er tomme plassholdere med riktig størrelse. Under rask rulling hentes ingen bilder. De skarpe bildene lastes når rullingen stopper, og forespørsler for sider som har gått ut av skjermen, avbrytes. Etter en endring byttes bare miniatyren til siden som ble endret.
 
-**Hver endring er ett angresteg.** Før en endring tas et øyeblikksbilde av arbeidskopien. Feiler endringen, rulles den tilbake. OCR over mange sider er også ett steg.
+**Hver endring er ett angresteg.** Før en endring tas et øyeblikksbilde av arbeidskopien. Feiler endringen, rulles den tilbake. OCR over mange sider er også ett steg. Store øyeblikksbilder, for eksempel av et skannet dokument, venter i en midlertidig fil i stedet for i minnet.
+
+**Word-eksporten går i en egen prosess.** PyMuPDF tåler ikke å brukes fra to tråder samtidig, så all bruk går gjennom én lås. Konverteringen til Word kan ta minutter. Den får en kopi av dokumentet og kjører i en egen prosess, så sidene lastes mens den jobber, og «Avbryt» stopper prosessen.
+
+**Beskyttelsen følger med kopiene.** Sider som trekkes ut, deles opp eller komprimeres, får samme passord og tillatelser som dokumentet. En fil med begrensninger kan bare slås sammen med andre eller settes inn i et annet dokument av eieren, siden resultatet ikke får begrensningene med seg.
 
 **Kommentarene er vanlige PDF-kommentarer.** Uthevinger, tegninger, figurer og notater lagres som standard PDF-annotasjoner, så andre PDF-lesere viser dem og kan redigere dem.
 
@@ -71,17 +75,17 @@ Koden er rundt 4 300 linjer Python, 4 000 linjer JavaScript og 1 500 linjer CSS.
 
 **Ett stilark for begge temaene.** Alle fargene ligger i variabler. Det mørke temaet er standardverdiene, og det lyse overstyrer dem i én blokk. Tittellinjen i Windows får de samme fargene, og vinduet starter i riktig farge, så det ikke blinker mørkt før et lyst tema er lastet.
 
-**Oversettelsene er testet.** De 523 tekstene i grensesnittet ligger i én tabell med tre språk. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler, ikke brukes, eller har ulike plassholdere på de tre språkene.
+**Oversettelsene er testet.** De 526 tekstene i grensesnittet ligger i én tabell med tre språk. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler, ikke brukes, eller har ulike plassholdere på de tre språkene.
 
 ### Testing
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 49 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, sladding, bokmerker og eksport |
-| `tests/test_api.py` | 35 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_engine.py` | 51 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker og eksport |
+| `tests/test_api.py` | 43 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 9 | OCR med språkdataene som følger med, digitale ID-er, signering og endringer etter signering |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
-| `tests/e2e/test_ui.py` | 42 | Grensesnittet, styrt med mus og tastatur |
+| `tests/e2e/test_ui.py` | 50 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
 
@@ -95,6 +99,8 @@ Noen av testene:
 - `test_failed_edit_rolls_back`: en endring som feiler, etterlater ingen spor
 - `test_watermark_angle_is_visual`: vinkelen på vannmerket er den brukeren ser, også når siden er rotert
 - `test_quick_successive_drawings_all_land`: fire figurer tegnet rett etter hverandre havner alle i filen
+- `test_ctrl_s_saves_what_is_still_being_typed`: Ctrl+S med markøren fortsatt i et skjemafelt eller en tekstboks lagrer det som står der
+- `test_link_leads_to_its_page_after_pages_are_inserted`: en lenke fører til riktig side også etter at sider er satt inn foran målet
 - `test_long_document_keeps_only_nearby_pages_alive`: i et dokument på 240 sider er høyst tolv sider levende
 - `test_theme_follows_windows_and_the_choice_is_remembered`: temaet følger Windows, og et tema valgt i menyen gjelder foran Windows og etter omstart
 
@@ -148,6 +154,8 @@ Resten står i `START_HER.md`.
 
 **Første kjøring på en ekte Windows-PC fant fem feil.** Hvert klikk på «Åpne» feilet. pywebview godtar bare bokstaver, tall og mellomrom i navnet på et filfilter, og filtrene het blant annet «Slike / Images». Testene svarer på fildialogene fra et skript og møtte aldri den kontrollen. Nå går hvert filter gjennom den samme kontrollen i en test. Avkrysningsboksen i skjemaet viste haken først etter et klikk et annet sted, fordi feltlaget ikke tegnes på nytt mens et felt har fokus. Panelet for sider viste slettede sider som valgt. I signaturpanelet for en kryptert fil sto årsak og sted som `<DecryptedObjectProxy object at …>`. Og når en signert fil ble lagret som kopi med eller uten passord, ble signaturen i kopien ugyldig uten varsel. Nå spør programmet først. Alle fem har tester.
 
+**En kodegjennomgang fant åtte feil til.** Ctrl+S rett etter skriving i et skjemafelt meldte «Lagret», men filen manglet den nye teksten, fordi feltet sender teksten først når det mister fokus. Komprimering gjorde en signatur ugyldig uten å spørre. Sider som ble trukket ut av en passordbeskyttet fil, ble lagret uten passord, og en fil med begrensninger kunne slås sammen til en ny fil uten dem. En lenke kunne føre til feil side etter at sider var satt inn foran målet. Og en nedtrekksliste lagret navnet «Norway» der skjemaet ventet koden «NO». Alle åtte har tester. En ny gjennomgang av rettelsene fant i tillegg at 30 sider trukket ut av en fil på 350 kB ble nesten 10 MB, fordi hver side fikk sin egen kopi av skriften og logoen. Nå deler sidene dem, og uttrekket er like stort som originalen.
+
 ---
 
 ## Forbehold
@@ -163,6 +171,8 @@ Resten står i `START_HER.md`.
 **OCR bruker de raske språkmodellene til Tesseract** (tessdata_fast). Håndskrift blir ikke gjenkjent.
 
 **Word-eksporten er en tilnærming.** Spalter og kompliserte tabeller blir sjelden helt like originalen.
+
+**Skjemafelt viser ikke Č, Ć og Đ i selve filen.** Teksten lagres riktig og vises i programmet, men feltet tegnes med standardskriften for skjemaer, som mangler disse bokstavene. Utskrift og eksport viser derfor feltet tomt, og det kan andre PDF-lesere også gjøre. Lister der flere valg kan merkes samtidig, kan ikke fylles ut.
 
 **Ytelsestallene er fra en container uten skjermkort**, ikke fra en vanlig PC.
 

@@ -39,10 +39,15 @@
       { label: A.t("insertBlankAfter"), icon: "insert", run: () => A.edit("insert_blank", { at: Math.max(...t) + 1, like: i }), disabled: !can },
       { label: A.t("insertFileAfter"), icon: "open", run: () => A.call("insert_file_dialog", { at: Math.max(...t) + 1 }), disabled: !can },
       { label: n > 1 ? A.t("duplicateN", { n }) : A.t("duplicate"), icon: "copy", run: () => A.edit("duplicate", { pages: t }), disabled: !can },
-      { label: n > 1 ? A.t("extractN", { n }) : A.t("extractPage"), icon: "export", run: () => A.call("extract_dialog", { pages: t }).then((r) => r && A.savedToast(r.path)) },
+      { label: n > 1 ? A.t("extractN", { n }) : A.t("extractPage"), icon: "export", run: () => A.extractPages(t) },
       "-",
       { label: n > 1 ? A.t("deleteN", { n }) : A.t("deletePage"), icon: "trash", danger: true, run: () => A.deletePages(t), disabled: !can },
     ];
+  };
+  A.extractPages = async (pages, extra) => {
+    await A.commitPending();
+    const r = await A.call("extract_dialog", { pages, ...extra }, { handle: A.askPasswords((x) => A.extractPages(pages, x)) });
+    if (r) A.savedToast(r.path);
   };
   A.deletePages = async (pages) => {
     if (!S.doc) return;
@@ -69,29 +74,50 @@
         A.menu(A.pageActions(i), e.clientX, e.clientY);
       });
     }
+    /** Tiles for the open document. For the same document only what changed is touched: one edit
+     *  in a 400-page file swaps one picture instead of rebuilding 400 tiles. */
     render() {
       const doc = S.doc;
-      this.host.textContent = "";
-      if (!doc) return;
-      const frag = document.createDocumentFragment();
-      doc.pages.forEach(([w, h, rev], i) => {
-        const t = A.h(`<div class="tile" data-i="${i}"><div class="tframe" style="aspect-ratio:${w}/${h}"><img loading="lazy" decoding="async" draggable="false" alt=""></div><span class="tnum">${i + 1}</span></div>`);
-        A.$("img", t).src = A.pageUrl(rev, this.width);
-        if (this.big) {
-          t.appendChild(A.h(`<div class="tacts">
-            <button class="icon-btn sm" data-a="rotL" data-tip="rotateL">${A.icon("rotL", 16)}</button>
-            <button class="icon-btn sm" data-a="rotR" data-tip="rotateR">${A.icon("rotR", 16)}</button>
-            <button class="icon-btn sm" data-a="dup" data-tip="duplicate">${A.icon("copy", 16)}</button>
-            <button class="icon-btn sm danger" data-a="del" data-tip="deletePage">${A.icon("trash", 16)}</button></div>`));
-        }
-        frag.appendChild(t);
-      });
-      if (this.big) {
-        frag.appendChild(A.h(`<button class="tile add" data-a="add"><span>${A.icon("plus", 26)}</span><b>${A.esc(A.t("addPages"))}</b></button>`));
+      if (!doc || this.docId !== doc.id) {
+        this.host.textContent = "";
+        this.docId = doc ? doc.id : null;
+        if (!doc) return;
       }
-      this.host.appendChild(frag);
-      A.applyI18n(this.host);
+      const tiles = A.$$(".tile[data-i]", this.host);
+      let add = A.$(".tile.add", this.host);
+      doc.pages.forEach(([w, h, rev], i) => {
+        let t = tiles[i];
+        if (!t) {
+          t = this.tile();
+          this.host.insertBefore(t, add);
+        }
+        if (t.dataset.rev !== String(rev)) {
+          t.dataset.rev = rev;
+          A.$(".tframe", t).style.aspectRatio = `${w}/${h}`;
+          A.$("img", t).src = A.pageUrl(rev, this.width);
+        }
+        t.dataset.i = i;
+        A.$(".tnum", t).textContent = i + 1;
+      });
+      tiles.slice(doc.pages.length).forEach((t) => t.remove());
+      if (this.big && !add) {
+        add = A.h(`<button class="tile add" data-a="add"><span>${A.icon("plus", 26)}</span><b data-i18n="addPages"></b></button>`);
+        this.host.appendChild(add);
+        A.applyI18n(add);
+      }
       this.mark();
+    }
+    tile() {
+      const t = A.h(`<div class="tile"><div class="tframe"><img loading="lazy" decoding="async" draggable="false" alt=""></div><span class="tnum"></span></div>`);
+      if (this.big) {
+        t.appendChild(A.h(`<div class="tacts">
+          <button class="icon-btn sm" data-a="rotL" data-tip="rotateL">${A.icon("rotL", 16)}</button>
+          <button class="icon-btn sm" data-a="rotR" data-tip="rotateR">${A.icon("rotR", 16)}</button>
+          <button class="icon-btn sm" data-a="dup" data-tip="duplicate">${A.icon("copy", 16)}</button>
+          <button class="icon-btn sm danger" data-a="del" data-tip="deletePage">${A.icon("trash", 16)}</button></div>`));
+        A.applyI18n(t);
+      }
+      return t;
     }
     mark() {
       A.$$(".tile[data-i]", this.host).forEach((t) => {

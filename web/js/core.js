@@ -111,8 +111,14 @@
   };
   /** Resolves once every queued edit has been answered (used by tests and before saving). */
   A.idle = () => chain.then(() => null);
-  /** Finish what the user just did (ink waiting to be batched, queued edits) before reading the document. */
-  A.commitPending = async () => { if (A.flushInk) A.flushInk(); await A.idle(); };
+  /** Finish what the user just did (a form field or text box still being typed in, ink waiting to be
+   *  batched, queued edits) before the document is saved, printed or exported. */
+  A.commitPending = async () => {
+    const el = document.activeElement;
+    if (el && el.closest(".pg")) el.blur(); // fields and text boxes on a page send their text when they lose focus
+    if (A.flushInk) A.flushInk();
+    await A.idle();
+  };
 
   A.applyDoc = (doc) => {
     const prev = S.doc;

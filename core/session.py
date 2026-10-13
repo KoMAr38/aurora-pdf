@@ -12,11 +12,11 @@ revisions, which makes undo instant on screen (the old images are still cached).
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import itertools
 import os
 import secrets
 import shutil
+import tempfile
 import threading
 import time
 
@@ -31,6 +31,7 @@ _STATE = itertools.count(1)
 _DOC_ID = itertools.count(1)
 MAX_UNDO = 60
 MAX_UNDO_BYTES = 700 * 1024 * 1024
+SPILL_BYTES = 2 * 1024 * 1024  # bigger undo steps wait in a temporary file, not in memory
 
 
 def _has_signatures(doc) -> bool:
@@ -63,14 +64,47 @@ def _atomic(out_path: str, produce) -> None:
                 pass
 
 
-@dataclasses.dataclass
 class Snapshot:
-    label: str
-    data: bytes
-    revs: list
-    sizes: list
-    state: int
-    fonts: bool
+    """One undo step: the whole document as it was, with its page revisions.
+
+    A big one (a scanned document) goes to an anonymous temporary file, which the system removes
+    when it is closed or the program ends, so a long undo history does not fill the memory.
+    """
+
+    def __init__(self, label: str, data: bytes, revs: list, sizes: list, state: int, fonts: bool):
+        self.label, self.revs, self.sizes, self.state, self.fonts = label, revs, sizes, state, fonts
+        self.size = len(data)
+        self._file = None
+        if self.size > SPILL_BYTES:
+            try:
+                self._file = tempfile.TemporaryFile()
+                self._file.write(data)
+                data = b""
+            except OSError:  # no room in the temp folder: memory still works
+                self.close()
+                self._file = None
+        self._data = data
+
+    @property
+    def on_disk(self) -> bool:
+        return self._file is not None
+
+    @property
+    def data(self) -> bytes:
+        if self._file is None:
+            return self._data
+        self._file.seek(0)
+        return self._file.read()
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+
+
+def _drop(stack: list) -> None:
+    for snap in stack:
+        snap.close()
+    stack.clear()
 
 
 class Edit:
@@ -152,8 +186,8 @@ class Session:
             self.path = None
             self.name = ""
             self.revs, self.sizes, self._rev_index = [], [], {}
-            self.undo_stack.clear()
-            self.redo_stack.clear()
+            _drop(self.undo_stack)
+            _drop(self.redo_stack)
 
     # --- helpers --------------------------------------------------------------
 
@@ -189,6 +223,7 @@ class Session:
         return Snapshot(label, self.doc.tobytes(), list(self.revs), list(self.sizes), self.state, self.fonts_embedded)
 
     def _restore(self, snap: Snapshot) -> None:
+        """Go back to ``snap``, which is used up by that (undo and redo keep a new one of the state they leave)."""
         old = self.doc
         self.doc = pymupdf.open("pdf", snap.data)
         if old is not None:
@@ -196,12 +231,15 @@ class Session:
         self.revs, self.sizes, self.state, self.fonts_embedded = list(snap.revs), list(snap.sizes), snap.state, snap.fonts
         self._reindex()
         self.forms = an.has_fields(self.doc)
+        snap.close()
 
     def _push_undo(self, snap: Snapshot) -> None:
         self.undo_stack.append(snap)
-        total = sum(len(s.data) for s in self.undo_stack)
+        total = sum(s.size for s in self.undo_stack)
         while len(self.undo_stack) > MAX_UNDO or (total > MAX_UNDO_BYTES and len(self.undo_stack) > 1):
-            total -= len(self.undo_stack.pop(0).data)
+            old = self.undo_stack.pop(0)
+            total -= old.size
+            old.close()
 
     def _check_job(self) -> None:
         if self.job and threading.current_thread() is not self._job_thread:
@@ -230,7 +268,7 @@ class Session:
 
     def _commit(self, snap: Snapshot, ed: Edit) -> None:
         self._push_undo(snap)
-        self.redo_stack.clear()
+        _drop(self.redo_stack)
         n = len(self.doc)
         if ed.revs is not None:
             self.revs = list(ed.revs)
@@ -305,6 +343,8 @@ class Session:
                     ed = Edit()
                     ed.touch(*touched)
                     self._commit(snap, ed)
+                else:
+                    snap.close()
         return touched
 
     # --- saving -------------------------------------------------------------------
@@ -326,13 +366,8 @@ class Session:
         with self.lock:
             self.require()
             prot = self.save_protection() if protection == "keep" else protection
-            prot = prot or {}
-            _atomic(out_path, lambda tmp: pt.save_pdf(
-                self.doc, tmp, user_pw=prot.get("user_pw"), owner_pw=prot.get("owner_pw"),
-                perms=prot.get("perms") if prot.get("perms") not in (None, -1) else None,
-                algorithm=prot.get("algorithm") or "aes256", compress=compress,
-                subset_fonts=self.fonts_embedded,
-            ))
+            _atomic(out_path, lambda tmp: pt.save_pdf(self.doc, tmp, compress=compress, subset_fonts=self.fonts_embedded,
+                                                      **pt.protection_args(prot)))
 
     def save(self) -> str:
         """Save over the current file, keeping its protection."""
@@ -348,23 +383,26 @@ class Session:
             self.saved_state = self.state
             return self.path
 
-    def save_as(self, out_path: str) -> str:
-        """Save to a new file and continue working on it."""
+    @property
+    def copies_as_is(self) -> bool:
+        """Save As copies the file byte for byte: it is signed and unchanged, and a rewrite would break the signatures."""
+        return self.signed and not self.dirty and bool(self.path)
+
+    def save_as(self, out_path: str, protection: dict | None | str = "keep") -> str:
+        """Save to a new file and continue working on it, with ``protection`` (default: the current one)."""
         with self.lock:
             self.require()
             same = bool(self.path) and os.path.normcase(os.path.abspath(out_path)) == os.path.normcase(self.path)
-            if self.signed and not self.dirty and self.path:
-                # an unchanged signed file is copied byte for byte: rewriting it would break the signatures
+            if self.copies_as_is:
                 if not same:
                     _atomic(out_path, lambda tmp: shutil.copyfile(self.path, tmp))
             else:
                 if same and self.protection and self.protection.get("owner_pw") is None:
                     raise SessionError("SAVE_AS_COPY")
                 # without the owner password the copy gets a random one, so its restrictions stay
-                prot = self.save_protection()
+                prot = self.save_protection() if protection == "keep" else protection
                 self.write(out_path, protection=prot)
-                if prot:
-                    self.protection = prot  # only after the write worked: later saves keep the same protection
+                self.protection = prot  # only after the write worked: later saves keep the same protection
             self.path = os.path.abspath(out_path)
             self.name = os.path.basename(out_path)
             self.saved_state = self.state
@@ -382,7 +420,8 @@ class Session:
                 "id": self.doc_id,
                 "name": self.name,
                 "path": self.path or "",
-                "pages": [[w, h, rev] for (w, h), rev in zip(self.sizes, self.revs)],
+                # [width, height, revision, xref]: links point at a page by its xref, which moves with the page
+                "pages": [[w, h, rev, self.doc.page_xref(i)] for i, ((w, h), rev) in enumerate(zip(self.sizes, self.revs))],
                 "dirty": self.dirty,
                 "undo": self.undo_stack[-1].label if self.undo_stack else "",
                 "redo": self.redo_stack[-1].label if self.redo_stack else "",

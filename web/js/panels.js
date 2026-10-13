@@ -87,6 +87,8 @@
       r.addEventListener("input", () => { if (out) out.textContent = r.value + unit; });
     });
   }
+  // a protected, unprotected or compressed copy is a full rewrite, which breaks every signature in it
+  const signedOk = async () => !S.doc.signed || A.confirm(A.t("signedSaveTitle"), A.t("signedCopyMsg"), A.t("saveAnyway"));
   const segVal = (root, id) => { const b = A.$(`#${id} .active`, root); return b ? b.dataset.v : null; };
   const val = (root, id) => A.$(`#${id}`, root).value;
   const on = (root, id) => A.$(`#${id}`, root).checked;
@@ -237,9 +239,8 @@
       const r = await A.call("unlock_owner", { password: val(root, "ownPw") }, { handle: (e) => e.error === "WRONG_PASSWORD" && (A.toast(A.t("e_WRONG_PASSWORD"), "bad"), true) });
       if (r) A.toast(A.t("ownerUnlocked"));
     };
-    // a protected or unprotected copy is a full rewrite, which breaks every signature in it
-    const signedOk = async () => !S.doc.signed || A.confirm(A.t("signedSaveTitle"), A.t("signedCopyMsg"), A.t("saveAnyway"));
     if (A.$("#unprot", root)) A.$("#unprot", root).onclick = async () => {
+      await A.commitPending();
       if (!(await signedOk())) return;
       const r = await A.call("save_unprotected", {});
       if (r) A.savedToast(r.path);
@@ -247,6 +248,7 @@
     A.$("#doLock", root).onclick = async () => {
       const user = val(root, "userPw"), owner = val(root, "ownerPw");
       if (!user && !owner) return A.toast(A.t("needAPassword"), "bad");
+      await A.commitPending();
       if (!(await signedOk())) return;
       const allowed = [];
       if (on(root, "p_print")) allowed.push("print", "print_hq");
@@ -378,7 +380,7 @@
     A.$("#oL", root).onclick = () => A.edit("rotate", { pages: pick(), degrees: -90 });
     A.$("#oR", root).onclick = () => A.edit("rotate", { pages: pick(), degrees: 90 });
     A.$("#oDup", root).onclick = () => A.edit("duplicate", { pages: pick() });
-    A.$("#oExt", root).onclick = () => A.call("extract_dialog", { pages: pick() }).then((r) => r && A.savedToast(r.path));
+    A.$("#oExt", root).onclick = () => A.extractPages(pick());
     A.$("#oDel", root).onclick = () => A.deletePages(pick());
     A.$("#oBlank", root).onclick = () => A.edit("insert_blank", { at: after(), like: Math.max(0, after() - 1) });
     A.$("#oFile", root).onclick = () => A.call("insert_file_dialog", { at: after() });
@@ -386,8 +388,12 @@
     A.$("#oSplit", root).onclick = async () => {
       const n = await A.prompt(A.t("splitDoc"), A.t("splitEvery"), "1");
       if (n == null) return;
-      const r = await A.call("split_dialog", { every: Math.max(1, parseInt(n, 10) || 1) });
-      if (r) A.savedToast(r.path, "splitDone");
+      const split = async (extra) => {
+        await A.commitPending();
+        const r = await A.call("split_dialog", { every: Math.max(1, parseInt(n, 10) || 1), ...extra }, { handle: A.askPasswords(split) });
+        if (r) A.savedToast(r.path, "splitDone");
+      };
+      split();
     };
     A.$("#oCrop", root).onclick = () => {
       const target = S.selected.size ? Math.min(...S.selected) : S.current;
@@ -462,6 +468,7 @@
       if (kind === "print") return A.print(pages);
       const payload = { kind, pages };
       if (kind === "images") Object.assign(payload, { format: segVal(root, "exF"), dpi: +val(root, "exD") });
+      await A.commitPending();
       const r = await A.call("export_start", payload);
       if (!r) return;
       const j = await A.runJob(r.job, A.t("exporting"));
@@ -550,15 +557,19 @@
         if (r2) A.toast(A.t("applied"));
       };
       if (A.$("#iReveal", host)) A.$("#iReveal", host).onclick = () => A.call("reveal", { path: r.path }, { quiet: true });
-      A.$("#cGo", host).onclick = async () => {
+      const compress = async (asked, extra) => {
         const dpi = +segVal(host, "cq");
-        const st = await A.call("export_start", { kind: "compress", dpi, quality: dpi >= 150 ? 80 : dpi >= 110 ? 70 : 60 });
+        await A.commitPending();
+        if (!asked && !(await signedOk())) return;
+        const st = await A.call("export_start", { kind: "compress", dpi, quality: dpi >= 150 ? 80 : dpi >= 110 ? 70 : 60, ...extra },
+          { handle: A.askPasswords((x) => compress(true, x)) });
         if (!st) return;
         const j = await A.runJob(st.job, A.t("compressing"));
         if (j.state !== "done") return j.state === "cancelled" ? A.toast(A.t("cancelled"), "info") : A.toast(A.t("e_ERROR"), "bad");
         const pct = j.result.before ? Math.round((1 - j.result.after / j.result.before) * 100) : 0;
         A.toast(A.t("compressed", { size: A.fmtBytes(j.result.after), pct: Math.max(0, pct) }), "good", { label: A.t("showFolder"), run: () => A.call("reveal", { path: j.result.path }, { quiet: true }) });
       };
+      A.$("#cGo", host).onclick = () => compress();
     });
   };
 

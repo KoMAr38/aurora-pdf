@@ -327,6 +327,8 @@
   }
 
   /* ---------- links ---------- */
+  // a link names its target page by xref; where that page is now comes from the current page list
+  const targetOf = (l) => (S.doc ? S.doc.pages.findIndex((p) => p[3] === l.px) : -1);
   function renderLinks(pg) {
     const lk = pg.lk, info = pg.info;
     lk.textContent = "";
@@ -334,12 +336,14 @@
       const a = document.createElement("a");
       a.className = "link";
       a.style.cssText = pct(l.r, info);
-      a.title = l.u ? l.u : `${A.t("page")} ${l.p + 1}`;
+      if (l.u) a.title = l.u;
+      else a.onpointerenter = () => { const i = targetOf(l); a.title = i < 0 ? "" : `${A.t("page")} ${i + 1}`; };
       a.onclick = (e) => {
         e.preventDefault();
         if (S.mode !== "select") return;
-        if (l.u) openExternal(l.u);
-        else A.gotoPage(l.p);
+        if (l.u) return openExternal(l.u);
+        const i = targetOf(l);
+        if (i >= 0) A.gotoPage(i);
       };
       lk.appendChild(a);
     });
@@ -388,10 +392,12 @@
         el = document.createElement("select");
         if (f.k === "list") el.size = Math.max(2, Math.min(6, (f.opts || []).length));
         if (f.multi) el.multiple = true;
-        (f.opts || []).forEach((o) => {
+        const chosen = Array.isArray(f.v) ? f.v : [f.v];
+        (f.opts || []).forEach(([value, label]) => { // the file keeps the value, the list shows the label
           const op = document.createElement("option");
-          op.value = op.textContent = o;
-          if (Array.isArray(f.v) ? f.v.includes(o) : f.v === o) op.selected = true;
+          op.value = value;
+          op.textContent = label;
+          if (chosen.includes(value)) op.selected = true;
           el.appendChild(op);
         });
         el.addEventListener("change", () => setField(pg, f, el.multiple ? [...el.selectedOptions].map((o) => o.value) : el.value));

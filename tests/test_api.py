@@ -177,6 +177,107 @@ def test_unprotected_copy(api, tmp_path):
     assert not pymupdf.open(out).needs_pass
 
 
+def test_unprotected_save_over_the_open_file_updates_the_session(api, tmp_path, monkeypatch):
+    """Picking the open file itself for "save without protection" makes it the unprotected version;
+    the session used to keep the old protection and then asked for passwords on the next save."""
+    locked = str(tmp_path / "l.pdf")
+    pt.save_pdf(make_doc(2), locked, user_pw="u1", owner_pw="o1")
+    ok(call(api, "open_path", path=locked, password="o1"))  # the owner; the open password stays unknown
+
+    def in_use(*args, **kwargs):
+        raise PermissionError("the file is open in another program")
+
+    with monkeypatch.context() as m:  # a write that fails changes nothing, in the file or in the app
+        m.setattr(pt, "save_pdf", in_use)
+        answers(api, locked)
+        assert call(api, "save_unprotected")["error"] == "FILE_LOCKED"
+    d = call(api, "state")["doc"]
+    assert d["protected"] and not d["dirty"] and pymupdf.open(locked).needs_pass
+    answers(api, locked)
+    d = ok(call(api, "save_unprotected"))["doc"]
+    assert not d["protected"] and not d["dirty"] and not pymupdf.open(locked).needs_pass
+    ok(call(api, "rotate", pages=[0], degrees=90))
+    ok(call(api, "save"))
+    doc = pymupdf.open(locked)
+    assert not doc.needs_pass and doc[0].rotation == 90
+
+
+def test_extracted_and_split_pages_keep_the_protection(api, tmp_path):
+    locked = str(tmp_path / "l.pdf")
+    pt.save_pdf(make_doc(3), locked, user_pw="u1", owner_pw="o1", allowed=["print", "assemble"])
+    ok(call(api, "open_path", path=locked, password="u1"))
+    out = str(tmp_path / "pages.pdf")
+    answers(api, out)
+    ok(call(api, "extract_dialog", pages=[1]))
+    _, info = pt.load_for_editing(out, "u1")
+    assert info["protected"] and not info["owner"] and not pt.rights_for(info)["copy"]
+    with pytest.raises(ValueError, match="NEED_PASSWORD"):
+        pt.load_for_editing(out)
+    folder = tmp_path / "parts"
+    folder.mkdir()
+    answers(api, str(folder))
+    ok(call(api, "split_dialog", every=2))
+    assert sorted(pymupdf.open(str(p)).needs_pass for p in folder.iterdir()) == [True, True]
+    for kind in ("txt", "docx", "images", "embedded"):  # these take the content out: copying is not allowed here
+        assert call(api, "export_start", kind=kind)["error"] == "NOT_ALLOWED"
+    # the owner without the open password is asked for it before picking a file, as when saving
+    ok(call(api, "open_path", path=locked, password="o1"))
+    answers(api, str(tmp_path / "never.pdf"))
+    assert call(api, "extract_dialog", pages=[0])["error"] == "NEED_PASSWORDS"
+    assert api._dialogs.script == [str(tmp_path / "never.pdf")]
+    # ... or takes the copy without protection: the open document keeps its own and has nothing to save
+    plain = str(tmp_path / "plain.pdf")
+    answers(api, plain)
+    ok(call(api, "extract_dialog", pages=[0], unprotected=True))
+    d = call(api, "state")["doc"]
+    assert not pymupdf.open(plain).needs_pass and d["protected"] and not d["dirty"]
+    ok(call(api, "set_protection", user_pw="u1"))  # the open password, told later, is no change either
+    assert not call(api, "state")["doc"]["dirty"]
+    ok(call(api, "open_path", path=locked, password="u1"))  # not the owner: no copy without protection
+    answers(api, str(tmp_path / "never.pdf"))
+    assert call(api, "extract_dialog", pages=[0], unprotected=True)["error"] == "NOT_ALLOWED"
+    assert api._dialogs.script == [str(tmp_path / "never.pdf")]
+
+
+def test_merge_and_insert_take_no_protected_file_of_someone_else(api, tmp_path):
+    """The result would not carry that file's protection, so only its owner may do this
+    (the rule for saving without protection)."""
+    theirs = str(tmp_path / "theirs.pdf")
+    pt.save_pdf(make_doc(2), theirs, owner_pw="boss", allowed=["print"])  # opens without a password
+    mine = save_tmp(make_doc(1), tmp_path, "mine.pdf")
+    out = tmp_path / "merged.pdf"
+    answers(api, str(out))
+    assert call(api, "merge_run", paths=[mine, theirs])["error"] == "SOURCE_PROTECTED"
+    assert not out.exists()
+    res, _ = opened(api, tmp_path, pages=2)
+    revs = [p[2] for p in res["doc"]["pages"]]
+    assert call(api, "insert_file_dialog", at=1, paths=[theirs])["error"] == "SOURCE_PROTECTED"
+    locked = str(tmp_path / "locked.pdf")
+    pt.save_pdf(make_doc(1), locked, user_pw="pw", owner_pw="boss")  # nothing in the app asks for its password
+    assert call(api, "insert_file_dialog", at=1, paths=[locked])["error"] == "SOURCE_PROTECTED"
+    d = call(api, "state")["doc"]
+    assert [p[2] for p in d["pages"]] == revs and not d["dirty"]
+    free = str(tmp_path / "free.pdf")
+    pt.save_pdf(make_doc(1), free, owner_pw="boss")  # encrypted, but every permission granted: nothing to lose
+    answers(api, str(out))
+    assert ok(call(api, "merge_run", paths=[mine, free]))["pages"] == 2  # as do unprotected files
+
+
+def test_copies_never_replace_the_open_file(api, tmp_path):
+    """Compressing, extracting or merging into the open file would leave the app showing a document
+    the file no longer holds (and a signed original would lose its signature)."""
+    _, path = opened(api, tmp_path)
+    before = open(path, "rb").read()
+    answers(api, path)
+    assert call(api, "export_start", kind="compress")["error"] == "OPEN_FILE"
+    answers(api, path)
+    assert call(api, "extract_dialog", pages=[0])["error"] == "OPEN_FILE"
+    other = save_tmp(make_doc(1), tmp_path, "other.pdf")
+    answers(api, path)
+    assert call(api, "merge_run", paths=[other, other])["error"] == "OPEN_FILE"
+    assert open(path, "rb").read() == before
+
+
 # --- annotations, forms, text -------------------------------------------------------------
 
 
@@ -228,6 +329,27 @@ def test_forms_through_api(api, tmp_path):
     ok(call(api, "flatten"))
     d = call(api, "state")["doc"]
     assert not d["forms"] and "Marko" in call(api, "page_text", page=0)["text"]
+
+
+def test_links_follow_their_page_when_pages_move(api, tmp_path):
+    """A page keeps its revision (and cached overlay) when pages are inserted before its link
+    target, so the link names the target page object, not its position."""
+    doc = make_doc(3)
+    doc[0].insert_link({"kind": pymupdf.LINK_GOTO, "from": pymupdf.Rect(50, 60, 200, 85), "page": 2})
+    path = save_tmp(doc, tmp_path, "links.pdf")
+    rev0 = ok(call(api, "open_path", path=path))["doc"]["pages"][0][2]
+    link = json.loads(api_server_info(api, rev0))["links"][0]
+
+    def target(d):
+        return [p[3] for p in d["pages"]].index(link["px"])
+
+    assert target(call(api, "state")["doc"]) == 2
+    d = ok(call(api, "insert_blank", at=1))["doc"]
+    assert d["pages"][0][2] == rev0 and target(d) == 3  # same overlay, the target moved on
+    d = ok(call(api, "reorder", order=[3, 0, 1, 2]))["doc"]
+    assert target(d) == 0
+    d = ok(call(api, "undo"))["doc"]
+    assert target(d) == 3
 
 
 def test_search_toc_metadata_attachments(api, tmp_path):
@@ -324,6 +446,40 @@ def test_docx_job(api, tmp_path):
     assert st["state"] == "done" and os.path.getsize(out) > 1000
 
 
+def test_word_export_leaves_the_document_free(api, tmp_path):
+    """pdf2docx can take minutes. It runs in a process of its own, so pages keep loading meanwhile
+    (PyMuPDF must not run on two threads of one process at once, hence not just a thread)."""
+    pytest.importorskip("pdf2docx")
+    opened(api, tmp_path, pages=30)
+    out = str(tmp_path / "long.docx")
+    answers(api, out)
+    job = ok(call(api, "export_start", kind="docx"))["job"]
+    free = 0
+    while call(api, "job_status", id=job)["job"]["state"] == "running":
+        if api.s.lock.acquire(timeout=0.5):
+            api.s.lock.release()
+            free += 1
+        time.sleep(0.05)
+    st = call(api, "job_status", id=job)["job"]
+    assert st["state"] == "done" and os.path.getsize(out) > 1000, st
+    assert free >= 3
+
+
+def test_big_undo_steps_wait_on_disk(api, tmp_path, monkeypatch):
+    from core import session as sess
+
+    monkeypatch.setattr(sess, "SPILL_BYTES", 1)  # every snapshot counts as big here
+    opened(api, tmp_path)
+    ok(call(api, "rotate", pages=[0], degrees=90))
+    ok(call(api, "rotate", pages=[0], degrees=90))
+    assert [s.on_disk for s in api.s.undo_stack] == [True, True]
+    ok(call(api, "undo"))
+    ok(call(api, "undo"))
+    assert api.s.doc[0].rotation == 0 and not call(api, "state")["doc"]["dirty"]
+    ok(call(api, "redo"))
+    assert api.s.doc[0].rotation == 90
+
+
 def test_ocr_job_is_one_undo_step(api, tmp_path):
     from test_ocr_sign import scanned_doc
 
@@ -403,12 +559,23 @@ def test_keep_protection_asks_only_for_the_open_password(api, tmp_path):
     ok(call(api, "open_path", path=path, password="owner1"))  # the owner opens it
     ok(call(api, "rotate", pages=[0]))
     assert call(api, "save")["error"] == "NEED_PASSWORDS"
+    answers(api, str(tmp_path / "copy.pdf"))
+    assert call(api, "save_as")["error"] == "NEED_PASSWORDS"  # asked before a file is picked, not after
+    assert api._dialogs.script == [str(tmp_path / "copy.pdf")]
+    answers(api, None)  # "save the copy without protection", then the file dialog is cancelled: nothing changes
+    assert call(api, "save_as", unprotected=True)["error"] == "CANCELLED"
+    assert call(api, "state")["doc"]["protected"]
     assert call(api, "set_protection", user_pw="typo")["error"] == "WRONG_PASSWORD"
     ok(call(api, "set_protection", user_pw="open1"))
     ok(call(api, "save"))
     _, info = pt.load_for_editing(path, "open1")
     assert not info["owner"] and pt.rights_for(info)["print"] and not pt.rights_for(info)["modify"]
     assert pt.load_for_editing(path, "owner1")[1]["owner"]
+    plain = str(tmp_path / "plain.pdf")
+    answers(api, plain)  # a copy without protection, written: the app goes on with that file
+    d = ok(call(api, "save_as", unprotected=True))["doc"]
+    assert not d["protected"] and d["path"] == os.path.abspath(plain) and not pymupdf.open(plain).needs_pass
+    assert pymupdf.open(path).needs_pass
 
 
 def test_non_owner_cannot_change_the_protection(api, tmp_path):
@@ -533,6 +700,37 @@ def test_theme_setting_and_title_bar(api, tmp_path, monkeypatch):
     ok(call(api, "window_theme", dark=False))
     ok(call(api, "window_theme", dark=True))
     assert seen == [False, True]
+
+
+def test_settings_changed_from_two_threads_keep_both_changes(tmp_path, monkeypatch):
+    """Requests run on several threads; each change used to read the file, edit and write it
+    back unguarded, so two at once could undo each other."""
+    import threading
+
+    from core import settings
+
+    monkeypatch.setenv("AURORA_DATA_DIR", str(tmp_path))
+    read = settings.load
+    both_read = threading.Barrier(2)
+
+    def slow_load():
+        data = read()
+        try:
+            both_read.wait(timeout=0.5)  # both threads hold the old settings before either writes
+        except threading.BrokenBarrierError:
+            pass
+        return data
+
+    monkeypatch.setattr(settings, "load", slow_load)
+    doc = str(tmp_path / "a.pdf")
+    threads = [threading.Thread(target=settings.update, kwargs={"author": "Ana"}),
+               threading.Thread(target=settings.add_recent, args=(doc,))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    final = read()
+    assert final["author"] == "Ana" and final["recent"][0]["path"] == doc
 
 
 def test_shortcuts_and_pdf_handler_carry_the_window_app_id():

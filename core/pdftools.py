@@ -219,6 +219,15 @@ def save_pdf(
         tmp.close()
 
 
+def protection_args(protection: dict | None) -> dict:
+    """:func:`save_pdf` keywords for a protection as the session keeps it ({user_pw, owner_pw, perms,
+    algorithm}); None or {} means none."""
+    p = protection or {}
+    perms = p.get("perms")
+    return {"user_pw": p.get("user_pw"), "owner_pw": p.get("owner_pw"), "algorithm": p.get("algorithm") or "aes256",
+            "perms": None if perms in (None, -1) else perms}
+
+
 # --- page ranges --------------------------------------------------------------
 
 
@@ -431,9 +440,29 @@ def insert_blank(doc: pymupdf.Document, at: int, width: float = 595, height: flo
     return at
 
 
+def load_source(path: str, password: str | None = None) -> pymupdf.Document:
+    """Open another file whose pages go into this or a new document (insert, merge).
+
+    Its protection does not come along, so a protected file is only taken from its owner (the same
+    rule as for saving without protection) or when it grants every permission, so nothing is lost.
+    Raises ValueError("SOURCE_PROTECTED") otherwise.
+    """
+    try:
+        doc, info = load_for_editing(path, password)
+    except ValueError as exc:
+        if str(exc) == "NEED_PASSWORD":  # nothing asks for a source's password: say what to do instead
+            raise ValueError("SOURCE_PROTECTED") from exc
+        raise
+    every = permissions_int(ALL_PERMS)
+    if info.get("protected") and not info.get("owner") and (info.get("perms", -1) & every) != every:
+        doc.close()
+        raise ValueError("SOURCE_PROTECTED")
+    return doc
+
+
 def insert_pdf_file(doc: pymupdf.Document, path: str, at: int, password: str | None = None) -> int:
     """Insert every page of another PDF before index ``at``. Returns the page count added."""
-    src, _ = load_for_editing(path, password)
+    src = load_source(path, password)
     try:
         at = max(0, min(at, len(doc)))
         doc.insert_pdf(src, start_at=at)
@@ -497,11 +526,12 @@ def uncrop_pages(doc: pymupdf.Document, pages: Sequence[int]) -> None:
 
 
 def merge(paths: Sequence[str], out_path: str, passwords: dict[str, str] | None = None) -> int:
+    """Combine whole files into a new, unprotected PDF (see :func:`load_source` for protected ones)."""
     passwords = passwords or {}
     out = pymupdf.open()
     try:
         for p in paths:
-            src, _ = load_for_editing(p, passwords.get(p))
+            src = load_source(p, passwords.get(p))
             out.insert_pdf(src)
             src.close()
         out.save(out_path, garbage=3, deflate=True)
@@ -510,19 +540,27 @@ def merge(paths: Sequence[str], out_path: str, passwords: dict[str, str] | None 
         out.close()
 
 
-def extract_pages(doc: pymupdf.Document, pages: Sequence[int], out_path: str) -> None:
-    """Write a new PDF containing only ``pages`` (in the given order)."""
+def copy_pages(doc: pymupdf.Document, pages: Sequence[int]) -> pymupdf.Document:
+    """A new document of ``pages``, in that order. One graft map for all of them (``final`` only on the
+    last), so fonts and images the pages share are copied once and not once per page."""
     out = pymupdf.open()
+    for k, pno in enumerate(pages):
+        out.insert_pdf(doc, from_page=pno, to_page=pno, final=k == len(pages) - 1)
+    return out
+
+
+def extract_pages(doc: pymupdf.Document, pages: Sequence[int], out_path: str, protection: dict | None = None) -> None:
+    """Write a new PDF containing only ``pages`` (in the given order). The pages keep the protection
+    of their document: pass it as Session.save_protection gives it, like a Save As copy."""
+    out = copy_pages(doc, pages)
     try:
-        for pno in pages:
-            out.insert_pdf(doc, from_page=pno, to_page=pno)
-        out.save(out_path, garbage=3, deflate=True)
+        save_pdf(out, out_path, **protection_args(protection))
     finally:
         out.close()
 
 
-def split_doc(doc: pymupdf.Document, out_dir: str, n: int, base: str) -> list[str]:
-    """Split into chunks of ``n`` pages. Returns the written file paths."""
+def split_doc(doc: pymupdf.Document, out_dir: str, n: int, base: str, protection: dict | None = None) -> list[str]:
+    """Split into chunks of ``n`` pages, protected like :func:`extract_pages`. Returns the written file paths."""
     n = max(1, int(n))
     written: list[str] = []
     for start in range(0, len(doc), n):
@@ -530,7 +568,7 @@ def split_doc(doc: pymupdf.Document, out_dir: str, n: int, base: str) -> list[st
         out = pymupdf.open()
         out.insert_pdf(doc, from_page=start, to_page=end)
         path = free_path(os.path.join(out_dir, f"{base}_{start + 1}-{end + 1}.pdf"))
-        out.save(path, garbage=3, deflate=True)
+        save_pdf(out, path, **protection_args(protection))
         out.close()
         written.append(path)
     return written
@@ -748,40 +786,75 @@ def compress_to(doc: pymupdf.Document, out_path: str, *, image_dpi: int = 150, q
                 tmp.rewrite_images(dpi_threshold=int(image_dpi * 1.3), dpi_target=int(image_dpi), quality=int(quality))
             except Exception:  # shortcut: keep going with lossless savings only
                 pass
-        protection = protection or {}
-        save_pdf(tmp, out_path, compress=True, subset_fonts=True,
-                 user_pw=protection.get("user_pw"), owner_pw=protection.get("owner_pw"),
-                 perms=protection.get("perms"), algorithm=protection.get("algorithm", "aes256"))
+        save_pdf(tmp, out_path, compress=True, subset_fonts=True, **protection_args(protection))
     finally:
         tmp.close()
     return os.path.getsize(out_path)
 
 
 def export_docx(pdf_path: str, out_path: str, progress: Progress = None, password: str | None = None) -> None:
-    """Convert a PDF file to Word with pdf2docx (imported lazily: it is heavy)."""
+    """Convert a PDF file to Word with pdf2docx, in a process of its own.
+
+    The conversion can take minutes and uses PyMuPDF all along, which must not run on two threads of
+    one process: in its own process it leaves the open document free, and a crash in it cannot take
+    the app down. ``progress`` returning False stops that process.
+    """
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    reader, writer = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_docx_process, args=(pdf_path, out_path, password, writer), daemon=True)
+    proc.start()
+    writer.close()  # only the child writes now: the end of the pipe is the end of the child
+    done = total = 0
+    error = None
+    try:
+        while True:
+            try:
+                msg = reader.recv() if reader.poll(0.25) else None
+            except (EOFError, OSError):  # the child has closed its end: it is done (Windows says so in poll)
+                break
+            if msg and msg[0] == "progress":
+                done, total = msg[1], msg[2]
+            elif msg:
+                error = msg[1]
+            _tick(progress, done, total)  # also between messages, so a cancel does not wait for the next page
+    except BaseException:
+        proc.terminate()
+        raise
+    finally:
+        proc.join()
+        reader.close()
+    if error or proc.exitcode:
+        raise RuntimeError(error or f"the Word export stopped (exit code {proc.exitcode})")
+
+
+def _docx_process(pdf_path: str, out_path: str, password: str | None, conn) -> None:
+    """The child process of :func:`export_docx`: converts, reports pdf2docx's "(3/10)" progress lines."""
     import logging
 
-    from pdf2docx import Converter
-
-    class _Hook(logging.Handler):
-        pat = re.compile(r"\((\d+)/(\d+)\)")
+    class Report(logging.Handler):
+        pattern = re.compile(r"\((\d+)/(\d+)\)")
 
         def emit(self, record):
-            m = self.pat.search(record.getMessage())
+            m = self.pattern.search(record.getMessage())
             if m:
-                _tick(progress, int(m.group(1)), int(m.group(2)))
+                conn.send(("progress", int(m.group(1)), int(m.group(2))))
 
-    hook = _Hook()
     root = logging.getLogger()
-    root.addHandler(hook)
-    old_level = root.level
+    root.addHandler(Report())  # before pdf2docx is imported, so its basicConfig leaves logging alone
     root.setLevel(logging.INFO)
+    pymupdf.set_messages(pylogging=True)  # MuPDF warnings into logging too: pythonw has no console
     try:
+        from pdf2docx import Converter
+
         cv = Converter(pdf_path, password=password)
         try:
             cv.convert(out_path, multi_processing=False)
         finally:
             cv.close()
+    except Exception as exc:
+        conn.send(("error", f"{type(exc).__name__}: {exc}"))
+        raise SystemExit(1)  # the exit code says it too, in case the message is lost with the pipe
     finally:
-        root.removeHandler(hook)
-        root.setLevel(old_level)
+        conn.close()

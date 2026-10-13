@@ -19,6 +19,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 from harness import app_server, launch_browser, rpc, script_dialogs  # noqa: E402
 import samples  # noqa: E402
+from core import pdftools as pt  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -255,6 +256,20 @@ def test_search_highlights_and_steps_through_hits(ui):
     assert ui.page.locator(".ov .hit").count() == 0
 
 
+def test_link_leads_to_its_page_after_pages_are_inserted(ui, tmp_path):
+    doc = pymupdf.open(ui.docs["plain"])
+    doc[0].insert_link({"kind": pymupdf.LINK_GOTO, "from": pymupdf.Rect(48, 60, 260, 86), "page": 2})
+    path = tmp_path / "links.pdf"
+    doc.save(str(path))
+    ui.open(str(path), copy=False)
+    ui.js("Aurora.edit('insert_blank', {at: 1})")
+    ui.idle()
+    assert len(ui.doc()["pages"]) == 4
+    ui.show_page(0)
+    ui.page.locator('.pg[data-i="0"] .lk a.link').click()
+    ui.page.wait_for_function("Aurora.S.current === 3", timeout=5000)  # page 3 of the file is the 4th now
+
+
 # ---------------------------------------------------------------- drawing and markup
 
 def test_pen_draws_ink_annotation(ui):
@@ -422,6 +437,23 @@ def test_fill_form_fields(ui):
     box = ui.page.locator('.pg[data-i="2"] .fx .chk[title="samtykke"]').bounding_box()
     (x0, y0), (x1, y1) = ui.at(2, r[0], r[1]), ui.at(2, r[2], r[3])
     assert max(abs(box["x"] - x0), abs(box["y"] - y0), abs(box["x"] + box["width"] - x1), abs(box["y"] + box["height"] - y1)) < 1.5
+
+
+def test_dropdown_shows_labels_and_stores_values(ui, tmp_path):
+    doc = pymupdf.open(ui.docs["plain"])
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_COMBOBOX, "land", pymupdf.Rect(50, 300, 250, 322)
+    w.choice_values = [["RS", "Serbia"], ["NO", "Norway"], ["SE", "Sweden"]]
+    w.field_value = "NO"
+    doc[0].add_widget(w)
+    path = tmp_path / "land.pdf"
+    doc.save(str(path))
+    ui.open(str(path), copy=False)
+    sel = ui.page.locator('.pg[data-i="0"] .fx select[title="land"]')
+    assert sel.evaluate("s => s.selectedOptions[0].textContent") == "Norway"
+    sel.select_option(label="Sweden")
+    ui.idle()
+    assert ui.js("Aurora.V.pages[0].info.fields.find(f => f.n === 'land').v") == "SE"
 
 
 def _draw_signature(ui):
@@ -653,6 +685,22 @@ def test_thumbnail_context_menu_duplicate_and_insert_blank(ui):
     assert ui.rpc("page_text", {"page": 1})["text"].strip() == ""
 
 
+def test_an_edit_redraws_only_the_thumbnail_of_its_page(ui, tmp_path):
+    ui.open(samples.build_big(tmp_path / "long.pdf", pages=12), copy=False)
+    tiles = "[...document.querySelectorAll('#thumbs .tile')]"
+    ui.js(f"{tiles}.forEach(t => t.__kept = true)")
+    before = ui.js(f"{tiles}.map(t => t.querySelector('img').src)")
+    ui.js("Aurora.edit('annot_add', {page: 3, kind: 'note', point: [100, 100], text: 'x'})")
+    ui.idle()
+    assert ui.js(f"{tiles}.every(t => t.__kept)")  # one note used to rebuild all of them
+    after = ui.js(f"{tiles}.map(t => t.querySelector('img').src)")
+    assert [k for k, (a, b) in enumerate(zip(before, after)) if a != b] == [3]
+    ui.js("Aurora.edit('insert_blank', {at: 0})")
+    ui.idle()
+    assert ui.js(f"{tiles}.map(t => t.querySelector('.tnum').textContent)") == [str(n) for n in range(1, 14)]
+    assert ui.js(f"{tiles}.map(t => t.querySelector('img').src)")[1:] == after
+
+
 def test_bookmarks_and_attachments_sidebar(ui):
     ui.open("report")
     ui.page.click('#sideTabs [data-side="outline"]')
@@ -760,6 +808,111 @@ def test_save_and_unsaved_changes_guard(ui):
     ui.page.keyboard.press("Control+s")
     ui.page.wait_for_function("!Aurora.S.doc.dirty", timeout=15000)
     assert [a.type[1] for a in pymupdf.open(path)[0].annots()] == ["Square"]
+
+
+def _press_and_wait_for_toast(ui, key):
+    n = ui.js("document.querySelectorAll('.toast').length")
+    ui.page.keyboard.press(key)
+    ui.page.wait_for_function("(n) => document.querySelectorAll('.toast').length > n", arg=n, timeout=15000)
+    ui.idle()
+
+
+def test_ctrl_s_saves_what_is_still_being_typed(ui):
+    """Ctrl+S right after typing, with the cursor still in the field or the text box."""
+    path = ui.open("report")
+    ui.show_page(2)
+    ui.page.locator('.pg[data-i="2"] .fx input[title="navn"]').click()
+    ui.page.keyboard.type("Kari")
+    _press_and_wait_for_toast(ui, "Control+s")
+    assert not ui.doc()["dirty"]
+    assert {w.field_name: w.field_value for w in pymupdf.open(path)[2].widgets()}["navn"] == "Kari"
+    ui.tool("text")
+    ui.click_at(2, 300, 460)  # under the signature field
+    ui.page.wait_for_function("document.activeElement && document.activeElement.matches('.ft-edit')", timeout=5000)
+    ui.page.keyboard.type("Hilsen")
+    _press_and_wait_for_toast(ui, "Control+s")
+    assert not ui.doc()["dirty"]
+    assert [a.info["content"] for a in pymupdf.open(path)[2].annots()] == ["Hilsen"]
+
+
+def test_save_without_a_file_name_goes_on_through_save_as(ui, tmp_path):
+    """An image opened as a PDF has no file yet: "save, then open the other one" used to stop after saving."""
+    from PIL import Image
+
+    img = tmp_path / "scan.png"
+    Image.new("RGB", (300, 400), "white").save(img)
+    ui.js("(p) => Aurora.openPath(p, {skipGuard: true})", str(img))
+    ui.page.wait_for_function("Aurora.S.doc && Aurora.S.doc.name === 'scan.pdf'", timeout=15000)
+    ui.wait_pages()  # else a late request for the page before the rotation gets a 404, which fails the test
+    ui.js("Aurora.edit('rotate', {pages: [0], degrees: 90})")
+    ui.idle()
+    out = ui.tmp / "scan.pdf"
+    ui.dialogs(out)
+    ui.js("(p) => { Aurora.openPath(p); }", ui.docs["plain"])  # asks about the unsaved changes first
+    ui.page.wait_for_selector(".scrim:not(.out) .m-foot")
+    ui.modal_button(ui.t("save"))
+    ui.page.wait_for_function("(p) => Aurora.S.doc && Aurora.S.doc.path === p", arg=ui.docs["plain"], timeout=15000)
+    assert pymupdf.open(out)[0].rotation == 90
+
+
+def test_save_as_that_needs_the_open_password_still_saves_a_copy(ui):
+    locked = ui.tmp / "policy.pdf"
+    pt.save_pdf(pymupdf.open(ui.docs["plain"]), str(locked), user_pw="open1", owner_pw="owner1", allowed=["print"])
+    ui.js("(p) => Aurora.call('open_path', {path: p, password: 'owner1'})", str(locked))  # the owner opens it
+    ui.page.wait_for_function("(p) => Aurora.S.doc && Aurora.S.doc.path === p", arg=str(locked), timeout=15000)
+    ui.wait_pages()
+    ui.js("Aurora.edit('rotate', {pages: [0], degrees: 90})")
+    ui.idle()
+    out = ui.tmp / "policy-copy.pdf"
+    ui.dialogs(out)
+    ui.page.keyboard.press("Control+Shift+S")
+    ui.page.wait_for_selector(".scrim:not(.out) #npU")
+    ui.page.fill(".scrim:not(.out) #npU", "open1")
+    ui.modal_button(ui.t("keepProtection"))
+    ui.page.wait_for_function("(p) => Aurora.S.doc.path === p", arg=str(out), timeout=15000)
+    copy, original = pymupdf.open(out), pymupdf.open(locked)
+    assert copy.authenticate("open1") and copy[0].rotation == 90
+    assert original.authenticate("open1") and original[0].rotation == 0  # it used to be saved over instead
+
+
+def test_pages_taken_out_without_protection_leave_the_document_protected(ui):
+    """The owner who lacks the open password may take pages out without protection. That answer used
+    to drop the protection of the open document too, and its next save had no password."""
+    locked = ui.tmp / "policy.pdf"
+    pt.save_pdf(pymupdf.open(ui.docs["plain"]), str(locked), user_pw="open1", owner_pw="owner1", allowed=["print"])
+    ui.js("(p) => Aurora.call('open_path', {path: p, password: 'owner1'})", str(locked))
+    ui.page.wait_for_function("(p) => Aurora.S.doc && Aurora.S.doc.path === p", arg=str(locked), timeout=15000)
+    ui.wait_pages()
+    out = ui.tmp / "page-1.pdf"
+    ui.dialogs(out)
+    n = ui.js("document.querySelectorAll('.toast').length")
+    ui.js("Aurora.extractPages([0])")
+    ui.page.wait_for_selector(".scrim:not(.out) #npU")
+    assert ui.js("document.querySelector('.scrim:not(.out) p').textContent") == ui.t("needPasswordsCopyMsg")
+    ui.modal_button(ui.t("removeProtection"))
+    ui.page.wait_for_function("(n) => document.querySelectorAll('.toast').length > n", arg=n, timeout=15000)
+    assert not pymupdf.open(out).needs_pass and len(pymupdf.open(out)) == 1
+    assert ui.js("[Aurora.S.doc.protected, Aurora.S.doc.dirty]") == [True, False]
+    assert pymupdf.open(locked).needs_pass
+
+
+def test_compressing_a_signed_document_asks_first(ui):
+    ui.open("plain")
+    ident = ui.rpc("id_create", {"name": "Ana Test", "password": "pw1234"})["id"]
+    signed = ui.tmp / "signed.pdf"
+    ui.dialogs(signed)
+    ui.js("(id) => Aurora.call('sign_digital', {id, password: 'pw1234'})", ident)  # opens the signed file
+    ui.page.wait_for_function("(p) => Aurora.S.doc && Aurora.S.doc.path === p && Aurora.S.doc.signed",
+                              arg=str(signed), timeout=30000)
+    ui.panel("info")
+    ui.page.wait_for_selector("#cGo")
+    ui.dialogs(ui.tmp / "small.pdf")
+    ui.page.click("#cGo")
+    ui.page.wait_for_selector(".scrim:not(.out) .m-foot")
+    assert ui.t("signedCopyMsg") in ui.page.locator(".scrim:not(.out)").inner_text()
+    ui.modal_button(ui.t("cancel"))
+    ui.page.wait_for_timeout(300)
+    assert not (ui.tmp / "small.pdf").exists()
 
 
 

@@ -86,6 +86,8 @@ window.Aurora = window.Aurora || {};
     ["e_SAVE_AS_COPY", "Fajl je zaštićen lozinkom vlasnika koju nemaš, pa se čuva kao kopija.", "This file has an owner password you don't have, so it is saved as a copy.", "Filen har et eierpassord du ikke har, så den lagres som en kopi."],
     ["e_NOT_SUPPORTED", "Ovaj tip fajla nije podržan.", "This file type isn't supported.", "Denne filtypen støttes ikke."],
     ["e_EMPTY_SIGNATURE", "Potpis je prazan.", "The signature is empty.", "Signaturen er tom."],
+    ["e_SOURCE_PROTECTED", "Fajl koji dodaješ je zaštićen, pa samo vlasnik može da ga doda: otvori ga ovde lozinkom vlasnika, sačuvaj ga bez zaštite, pa ga dodaj.", "The file you're adding is protected, so only its owner can add it: open it here with the owner password, save it without protection, then add it.", "Filen du legger til, er beskyttet, så bare eieren kan legge den til: åpne den her med eierpassordet, lagre den uten beskyttelse, og legg den til etterpå."],
+    ["e_OPEN_FILE", "Taj fajl je sad otvoren ovde. Izaberi drugo ime.", "That file is open here right now. Pick another name.", "Den filen er åpen her nå. Velg et annet navn."],
 
     /* ---- undo labels ---- */
     ["op_rotate", "rotacija", "rotate", "rotering"],
@@ -197,9 +199,10 @@ window.Aurora = window.Aurora || {};
     ["signedSaveTitle", "Potpisan dokument", "Signed document", "Signert dokument"],
     ["signedSaveMsg", "Ako sačuvaš izmene posle potpisivanja, postojeći potpisi više neće važiti. Ipak sačuvati?", "Saving changes after signing invalidates the existing signatures. Save anyway?", "Lagrer du endringer etter signering, blir signaturene ugyldige. Lagre likevel?"],
     ["saveAnyway", "Ipak sačuvaj", "Save anyway", "Lagre likevel"],
-    ["signedCopyMsg", "Promena zaštite menja ceo fajl, pa potpisi u novoj kopiji više neće važiti. Original ostaje potpisan. Ipak sačuvati?", "Changing the protection rewrites the whole file, so the signatures in the new copy will no longer be valid. The original stays signed. Save anyway?", "Endret beskyttelse skriver hele filen på nytt, så signaturene i den nye kopien blir ugyldige. Originalen forblir signert. Lagre likevel?"],
+    ["signedCopyMsg", "Ceo fajl se ponovo zapisuje, pa potpisi u njemu prestaju da važe. Ako ga sačuvaš pod novim imenom, original ostaje potpisan. Ipak sačuvati?", "The whole file gets rewritten, so the signatures in it stop being valid. If you save it under a new name, the original stays signed. Save anyway?", "Hele filen skrives på nytt, så signaturene i den slutter å gjelde. Lagrer du den under et nytt navn, forblir originalen signert. Lagre likevel?"],
     ["needPasswordsTitle", "Zadržati zaštitu?", "Keep the protection?", "Beholde beskyttelsen?"],
     ["needPasswordsMsg", "Fajl je otvoren lozinkom vlasnika, pa lozinka za otvaranje nije poznata. Unesi lozinku kojom se ovaj fajl otvara da ostane zaštićen kao do sada, ili ga sačuvaj bez zaštite.", "You opened this file with the owner password, so its open password is unknown. Enter the password that opens this file to keep it protected as it is, or save it without protection.", "Filen ble åpnet med eierpassordet, så passordet for å åpne den er ukjent. Skriv inn passordet som åpner filen for å beholde beskyttelsen som den er, eller lagre uten."],
+    ["needPasswordsCopyMsg", "Fajl je otvoren lozinkom vlasnika, pa lozinka za otvaranje nije poznata. Unesi je da kopija bude zaštićena kao ovaj fajl, ili sačuvaj kopiju bez zaštite. Otvoreni fajl ostaje kakav je.", "You opened this file with the owner password, so its open password is unknown. Enter it to protect the copy the same way, or save the copy without protection. The open file stays as it is.", "Filen ble åpnet med eierpassordet, så passordet for å åpne den er ukjent. Skriv det inn for å beskytte kopien på samme måte, eller lagre kopien uten beskyttelse. Den åpne filen forblir som den er."],
     ["keepProtection", "Zadrži zaštitu", "Keep protection", "Behold beskyttelsen"],
     ["removeProtection", "Sačuvaj bez zaštite", "Save without protection", "Lagre uten beskyttelse"],
     ["allPages", "Sve strane", "All pages", "Alle sider"],

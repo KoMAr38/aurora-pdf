@@ -201,6 +201,16 @@ class Api:
             return os.path.dirname(self.s.path)
         return settings.load().get("last_dir", "") or ""
 
+    def _is_open(self, path: str | None) -> bool:
+        return bool(path and self.s.path) and os.path.normcase(os.path.abspath(path)) == os.path.normcase(self.s.path)
+
+    def _new_file(self, out: str | None) -> str | None:
+        """Where an export or copy goes. Never the open document's own file: the app would go on showing
+        a document that file no longer holds (and a signed original would lose its signature)."""
+        if self._is_open(out):
+            raise SessionError("OPEN_FILE")
+        return out
+
     def _author(self) -> str:
         return settings.load().get("author", "") or ""
 
@@ -353,10 +363,12 @@ class Api:
     @rpc
     def save_as(self, a):
         self.s.require()
+        # a missing open password is asked for before the file is picked
+        prot = "keep" if self.s.copies_as_is else self._copy_protection(a)
         out = self._dialogs.save(self._default_name("copy") if self.s.path else self.s.name, PDF_TYPES, self._dir())
         if not out:
             return {"ok": False, "error": "CANCELLED"}
-        path = self.s.save_as(out)
+        path = self.s.save_as(out, protection=prot)
         settings.add_recent(path, len(self.s.doc))
         return self._doc(path=path)
 
@@ -379,13 +391,8 @@ class Api:
         out = self._dialogs.save(self._default_name("protected"), PDF_TYPES, self._dir())
         if not out:
             return {"ok": False, "error": "CANCELLED"}
-        if self.s.path and os.path.normcase(os.path.abspath(out)) == os.path.normcase(self.s.path):
-            # protecting the open file itself: it becomes the protected version
-            self.s.protection = prot
-            self.s.info.update(owner=True, protected=True)
-            self.s.mark_changed()
-            self.s.save()
-            return self._doc(path=out)
+        if self._is_open(out):
+            return self._protect_open_file(prot)
         self.s.write(out, protection=prot)
         return self._doc(path=out)
 
@@ -397,8 +404,22 @@ class Api:
         out = self._dialogs.save(self._default_name("unprotected"), PDF_TYPES, self._dir())
         if not out:
             return {"ok": False, "error": "CANCELLED"}
+        if self._is_open(out):
+            return self._protect_open_file(None)
         self.s.write(out, protection=None)
         return self._doc(path=out)
+
+    def _protect_open_file(self, protection: dict | None) -> dict:
+        """The protect or unprotect dialog picked the open file itself: it becomes that version, and the
+        session follows once the file is written, so the next save neither asks for old passwords nor
+        brings them back. A write that fails (file open elsewhere) changes nothing."""
+        with self.s.lock:
+            self.s.write(self.s.path, protection=protection)
+            self.s.protection = protection
+            self.s.info.update(protected=bool(protection), owner=True)
+            self.s.rights = pt.rights_for(self.s.info)
+            self.s.saved_state = self.s.state
+        return self._doc(path=self.s.path)
 
     @rpc
     def set_protection(self, a):
@@ -410,13 +431,23 @@ class Api:
                 if self.s.protection and not self.s.info.get("owner"):
                     raise SessionError("NOT_ALLOWED")
                 self.s.protection = None
+                self.s.mark_changed()
             else:
                 pw = a.get("user_pw") or ""
                 if not self.s.protection or (self.s.path and not pt.is_user_password(self.s.path, pw)):
                     raise SessionError("WRONG_PASSWORD")
-                self.s.protection["user_pw"] = pw
-            self.s.mark_changed()
+                self.s.protection["user_pw"] = pw  # the file already has this protection: nothing new to save
         return self._doc()
+
+    def _copy_protection(self, a: dict) -> dict | None:
+        """Protection for a new file made from this document (extract, split, compress): its own, asked
+        for before any dialog. Its owner may take a copy without it instead (``unprotected``), which
+        leaves the open document as it is."""
+        if a.get("unprotected"):
+            if self.s.protection and not self.s.info.get("owner"):
+                raise SessionError("NOT_ALLOWED")
+            return None
+        return self.s.save_protection()
 
     @rpc
     def unlock_owner(self, a):
@@ -552,22 +583,24 @@ class Api:
     def extract_dialog(self, a):
         pages = self._pages(a.get("pages"))
         self.s.require("assemble")
-        out = self._dialogs.save(self._default_name("pages"), PDF_TYPES, self._dir())
+        prot = self._copy_protection(a)
+        out = self._new_file(self._dialogs.save(self._default_name("pages"), PDF_TYPES, self._dir()))
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         with self.s.lock:
-            pt.extract_pages(self.s.doc, pages, out)
+            pt.extract_pages(self.s.doc, pages, out, prot)
         return {"ok": True, "path": out}
 
     @rpc
     def split_dialog(self, a):
         self.s.require("assemble")
+        prot = self._copy_protection(a)
         folder = self._dialogs.folder(self._dir())
         if not folder:
             return {"ok": False, "error": "CANCELLED"}
         base = os.path.splitext(self.s.name or "dokument")[0]
         with self.s.lock:
-            files = pt.split_doc(self.s.doc, folder, int(a.get("every", 1)), base)
+            files = pt.split_doc(self.s.doc, folder, int(a.get("every", 1)), base, prot)
         return {"ok": True, "path": folder, "count": len(files)}
 
     # --- whole-document edits ---------------------------------------------------------
@@ -788,7 +821,7 @@ class Api:
             names = {x["name"]: x for x in pt.list_attachments(self.s.require())}
         if name not in names:
             raise SessionError("NOT_FOUND")
-        out = self._dialogs.save(names[name]["file"], self._types("all"), self._dir())
+        out = self._new_file(self._dialogs.save(names[name]["file"], self._types("all"), self._dir()))
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         with self.s.lock:
@@ -866,15 +899,16 @@ class Api:
         doc = self.s.require()
         kind = a.get("kind")
         base = os.path.splitext(self.s.name or "dokument")[0]
-        if kind in ("txt", "docx") and not self.s.rights.get("copy"):
-            raise SessionError("NOT_ALLOWED")
+        if kind in ("txt", "docx", "images", "embedded") and not self.s.rights.get("copy"):
+            raise SessionError("NOT_ALLOWED")  # all of them take the content out of the document
         pages = self._pages(a.get("pages"))
+        prot = self._copy_protection(a) if kind == "compress" else None
         if kind == "docx":
             out = self._dialogs.save(base + ".docx", DOCX_TYPES, self._dir())
         elif kind == "txt":
             out = self._dialogs.save(base + ".txt", self._types("text"), self._dir())
         elif kind == "compress":
-            out = self._dialogs.save(self._default_name("small"), PDF_TYPES, self._dir())
+            out = self._new_file(self._dialogs.save(self._default_name("small"), PDF_TYPES, self._dir()))
         elif kind in ("images", "embedded"):
             out = self._dialogs.folder(self._dir())
         else:
@@ -884,19 +918,18 @@ class Api:
 
         def work(job):
             if kind == "docx":
-                # pdf2docx reads a file; give it a plain snapshot of the current state
+                # pdf2docx reads a file: a plain snapshot of the current state, made in a moment under the
+                # lock; the conversion runs in another process and leaves the document free meanwhile
                 import tempfile
 
                 fd, tmp = tempfile.mkstemp(suffix=".pdf")
                 os.close(fd)
                 try:
                     with self.s.lock:
-                        sub = pymupdf.open()
-                        for p in pages:
-                            sub.insert_pdf(self.s.doc, from_page=p, to_page=p)
+                        sub = pt.copy_pages(self.s.doc, pages)
                         sub.save(tmp)
                         sub.close()
-                        pt.export_docx(tmp, out, progress=job.progress)
+                    pt.export_docx(tmp, out, progress=job.progress)
                 finally:
                     os.remove(tmp)
                 return {"path": out}
@@ -907,7 +940,7 @@ class Api:
                 if kind == "compress":
                     before = len(self.s.doc.tobytes())
                     size = pt.compress_to(self.s.doc, out, image_dpi=int(a.get("dpi", 150)),
-                                          quality=int(a.get("quality", 75)), protection=self.s.save_protection())
+                                          quality=int(a.get("quality", 75)), protection=prot)
                     return {"path": out, "before": before, "after": size}
                 if kind == "images":
                     files = pt.export_page_images(self.s.doc, pages, out, base, a.get("format", "png"),
@@ -933,7 +966,7 @@ class Api:
         paths = [p for p in a.get("paths", []) if os.path.isfile(p)]
         if len(paths) < 2:
             raise SessionError("NEED_TWO")
-        out = self._dialogs.save(self._suffix("merged") + ".pdf", PDF_TYPES, os.path.dirname(paths[0]))
+        out = self._new_file(self._dialogs.save(self._suffix("merged") + ".pdf", PDF_TYPES, os.path.dirname(paths[0])))
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         with self.s.lock:
@@ -945,7 +978,7 @@ class Api:
         imgs = self._dialogs.open(True, self._types("images"), self._dir())
         if not imgs:
             return {"ok": False, "error": "CANCELLED"}
-        out = self._dialogs.save(self._suffix("images") + ".pdf", PDF_TYPES, os.path.dirname(imgs[0]))
+        out = self._new_file(self._dialogs.save(self._suffix("images") + ".pdf", PDF_TYPES, os.path.dirname(imgs[0])))
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         with self.s.lock:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .paths import data_dir
 
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()  # requests run on several threads: each read-change-write happens as one
 MAX_RECENT = 12
 
 DEFAULTS = {
@@ -41,7 +41,8 @@ def _file() -> Path:
 def load() -> dict:
     data = dict(DEFAULTS)
     try:
-        stored = json.loads(_file().read_text(encoding="utf-8"))
+        with _LOCK:  # Windows cannot replace the file (save) while another thread has it open for reading
+            stored = json.loads(_file().read_text(encoding="utf-8"))
         if isinstance(stored, dict):
             data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     except (OSError, ValueError):
@@ -62,11 +63,12 @@ def save(data: dict) -> None:
 
 
 def update(**changes) -> dict:
-    data = load()
-    for k, v in changes.items():
-        if k in DEFAULTS and k != "recent":
-            data[k] = v
-    save(data)
+    with _LOCK:
+        data = load()
+        for k, v in changes.items():
+            if k in DEFAULTS and k != "recent":
+                data[k] = v
+        save(data)
     return data
 
 
@@ -75,18 +77,20 @@ def _same(a: str, b: str) -> bool:
 
 
 def add_recent(path: str, pages: int = 0) -> None:
-    data = load()
-    items = [r for r in data.get("recent", []) if not _same(r.get("path", ""), path)]
-    items.insert(0, {"path": path, "name": os.path.basename(path), "pages": pages, "t": int(time.time())})
-    data["recent"] = items[:MAX_RECENT]
-    data["last_dir"] = os.path.dirname(path)
-    save(data)
+    with _LOCK:
+        data = load()
+        items = [r for r in data.get("recent", []) if not _same(r.get("path", ""), path)]
+        items.insert(0, {"path": path, "name": os.path.basename(path), "pages": pages, "t": int(time.time())})
+        data["recent"] = items[:MAX_RECENT]
+        data["last_dir"] = os.path.dirname(path)
+        save(data)
 
 
 def forget_recent(path: str) -> None:
-    data = load()
-    data["recent"] = [r for r in data.get("recent", []) if not _same(r.get("path", ""), path)]
-    save(data)
+    with _LOCK:
+        data = load()
+        data["recent"] = [r for r in data.get("recent", []) if not _same(r.get("path", ""), path)]
+        save(data)
 
 
 def recent() -> list[dict]:

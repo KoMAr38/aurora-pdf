@@ -110,13 +110,16 @@ def page_annots(page: pymupdf.Page) -> list[dict]:
 
 
 def page_links(page: pymupdf.Page) -> list[dict]:
+    """Links in display space. A link inside the document names its target page object ("px", the
+    xref the document summary lists per page), not its position: the overlay of this page is cached
+    under its revision, which stays the same when other pages move."""
     out = []
     m = page.rotation_matrix
     for link in page.get_links():
         r = rounded(pymupdf.Rect(link["from"]) * m)
         kind = link.get("kind")
         if kind in (pymupdf.LINK_GOTO, pymupdf.LINK_NAMED) and link.get("page", -1) >= 0:
-            out.append({"r": r, "p": link["page"]})
+            out.append({"r": r, "px": page.parent.page_xref(link["page"])})
         elif kind == pymupdf.LINK_URI and link.get("uri"):
             out.append({"r": r, "u": link["uri"]})
     return out
@@ -155,7 +158,8 @@ def page_fields(page: pymupdf.Page) -> list[dict]:
             if kind == "radio":
                 d["v"] = str(w.field_value) == str(w.on_state())
         elif kind in ("combo", "list"):
-            d["opts"] = [o if isinstance(o, str) else (o[1] if len(o) > 1 else o[0]) for o in (w.choice_values or [])]
+            # [value, label]: a choice may store "NO" and show "Norway"; the file keeps the value
+            d["opts"] = [[o, o] if isinstance(o, str) else [o[0], o[-1]] for o in (w.choice_values or [])]
             d["multi"] = bool(flags & FF_MULTISELECT)
         elif kind == "signature":
             d["signed"] = bool(w.is_signed)
@@ -481,6 +485,26 @@ def _widget(page, xref: int):
     raise ValueError("field not found")
 
 
+def _field_object(doc, xref: int) -> int:
+    """The object that holds a widget's value: the widget itself, or the parent that names the field."""
+    while doc.xref_get_key(xref, "T")[0] == "null":
+        kind, parent = doc.xref_get_key(xref, "Parent")
+        if kind != "xref":
+            break
+        xref = int(parent.split()[0])
+    return xref
+
+
+def _show(page, xref: int, w, text: str):
+    """The widget, ready for update() to draw ``text``. update() skips an empty value and reset()
+    brings back the default (/DV), so an empty text goes into /V itself and the widget is read again."""
+    if text:
+        w.field_value = text
+        return w
+    page.parent.xref_set_key(_field_object(page.parent, xref), "V", "()")
+    return _widget(page, xref)
+
+
 def set_field(page, xref: int, value) -> None:
     w = _widget(page, xref)
     if w.field_flags & FF_READONLY:
@@ -493,15 +517,20 @@ def set_field(page, xref: int, value) -> None:
             return
         w.field_value = w.on_state()
     elif kind in ("combo", "list"):
-        w.field_value = value if isinstance(value, list) else str(value)
+        if isinstance(value, list):
+            w.field_value = value
+        else:
+            value = str(value)
+            labels = {o[0]: o[-1] for o in w.choice_values or [] if not isinstance(o, str)}
+            _show(page, xref, w, labels.get(value, value)).update()  # MuPDF draws the text it gets: the label ("Norway")
+            # and the file keeps the value ("NO"), which is what the form hands on
+            page.parent.xref_set_key(_field_object(page.parent, xref), "V", pymupdf.get_pdf_str(value))
+            return
     elif kind == "text":
         text = str(value)
         if w.text_maxlen:
             text = text[: w.text_maxlen]
-        if not text:
-            w.reset()  # update() ignores an empty value; reset() really clears the field
-            return
-        w.field_value = text
+        w = _show(page, xref, w, text)
     else:
         raise ValueError(f"cannot fill a {kind} field")
     w.update()
@@ -514,12 +543,17 @@ def has_fields(doc: pymupdf.Document) -> bool:
 def reset_fields(doc: pymupdf.Document) -> int:
     n = 0
     for page in doc:
+        combos = []
         for w in page.widgets():
             kind = _widget_kind(w)
             if kind in ("signature", "button") or w.field_flags & FF_READONLY:
                 continue
             w.reset()
             n += 1
+            if kind == "combo":
+                combos.append(w.xref)
+        for xref in combos:  # reset() draws the stored value ("NO"): draw the label again
+            set_field(page, xref, _widget(page, xref).field_value or "")
     return n
 
 

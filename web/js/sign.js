@@ -291,6 +291,7 @@
         labels: { signedBy: A.t("apSignedBy"), date: A.t("apDate"), reason: A.t("reason"), location: A.t("location"), when: A.fmtShort(new Date(), true) },
       });
       delete payload.visible;
+      await A.commitPending();
       if (S.doc.signed && S.doc.dirty && !(await A.confirm(A.t("signedSaveTitle"), A.t("signedSaveMsg"), A.t("saveAnyway")))) return;
       if (S.doc.dirty) A.toast(A.t("dsUsesCurrent"), "info");
       const r = await A.call("sign_digital", payload, { handle: (e) => { if (e.error === "WRONG_PASSWORD") { A.toast(A.t("idWrongPassword"), "bad"); return true; } } });

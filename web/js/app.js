@@ -114,45 +114,53 @@
   };
 
   /* ---------- saving ---------- */
+  // both resolve to the backend's answer once the file is written (also by way of Save As or the
+  // password question), else to null: "save, then close or open another" relies on it
   A.save = async () => {
     if (!S.doc) return null;
     await A.commitPending();
     if (S.doc.signed && S.doc.dirty && !(await A.confirm(A.t("signedSaveTitle"), A.t("signedSaveMsg"), A.t("saveAnyway")))) return null;
-    const r = await A.call("save", {}, {
-      handle: (e) => {
-        if (e.error === "NEED_PATH") { A.saveAs(); return true; }
-        if (e.error === "SAVE_AS_COPY") { A.toast(A.t("e_SAVE_AS_COPY"), "info"); A.saveAs(); return true; }
-        if (e.error === "NEED_PASSWORDS") { needPasswords(); return true; }
-        return false;
-      },
-    });
-    if (r) A.toast(A.t("savedTo", { name: A.basename(r.path) }));
+    const r = await A.call("save", {}, { raw: true, handle: (e) => ["NEED_PATH", "SAVE_AS_COPY", "NEED_PASSWORDS"].includes(e.error) });
+    if (!r || r.ok === false) {
+      if (r && r.error === "NEED_PATH") return A.saveAs();
+      if (r && r.error === "SAVE_AS_COPY") { A.toast(A.t("e_SAVE_AS_COPY"), "info"); return A.saveAs(); }
+      if (r && r.error === "NEED_PASSWORDS") return needPasswords(A.save);
+      return null;
+    }
+    A.toast(A.t("savedTo", { name: A.basename(r.path) }));
     return r;
   };
-  A.saveAs = async () => {
+  A.saveAs = async (extra) => {
     if (!S.doc) return null;
     await A.commitPending();
     if (S.doc.signed && S.doc.dirty && !(await A.confirm(A.t("signedSaveTitle"), A.t("signedSaveMsg"), A.t("saveAnyway")))) return null;
-    const r = await A.call("save_as", {}, { handle: (e) => e.error === "NEED_PASSWORDS" && (needPasswords(), true) });
-    if (r) A.savedToast(r.path);
+    const r = await A.call("save_as", { ...extra }, { raw: true, handle: (e) => e.error === "NEED_PASSWORDS" });
+    if (!r || r.ok === false) return r && r.error === "NEED_PASSWORDS" ? needPasswords(A.saveAs, true) : null;
+    A.savedToast(r.path);
     return r;
   };
-  async function needPasswords() {
+  /** The open password is unknown: drop the protection or give that password, then save the same way again.
+   *  For a copy (Save As, extract, split, compress) only the copy goes without it: `retry({ unprotected: true })`,
+   *  so a cancelled file dialog leaves the document protected. */
+  async function needPasswords(retry, copy) {
     const r = await A.modal({
       title: A.t("needPasswordsTitle"),
-      body: `<p>${A.esc(A.t("needPasswordsMsg"))}</p><div class="field"><label>${A.esc(A.t("openPw"))}</label><input class="input" id="npU" type="password"></div>`,
+      body: `<p>${A.esc(A.t(copy ? "needPasswordsCopyMsg" : "needPasswordsMsg"))}</p><div class="field"><label>${A.esc(A.t("openPw"))}</label><input class="input" id="npU" type="password"></div>`,
       buttons: [
         { label: A.t("cancel"), kind: "ghost", value: null },
         { label: A.t("removeProtection"), kind: "", value: "remove" },
         { label: A.t("keepProtection"), kind: "primary", onClick: (m) => ({ user: $("#npU", m.el).value }) },
       ],
     });
-    if (!r) return;
+    if (!r) return null;
+    if (r === "remove" && copy) return retry({ unprotected: true });
     const ok = r === "remove"
       ? await A.call("set_protection", { remove: true })
       : await A.call("set_protection", { user_pw: r.user });
-    if (ok) A.save();
+    return ok ? retry() : null;
   }
+  /** `handle` for copies that keep the protection (extract, split, compress): the same question, then `again(extra)`. */
+  A.askPasswords = (again) => (e) => e.error === "NEED_PASSWORDS" && (needPasswords(again, true), true);
 
   /* ---------- printing ---------- */
   A.print = async (spec) => {

@@ -184,4 +184,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()  # the packaged .exe also starts the Word export process (core.pdftools)
     sys.exit(main())

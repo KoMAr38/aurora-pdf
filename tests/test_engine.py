@@ -213,6 +213,18 @@ def test_merge_extract_split_images(tmp_path):
     pt.extract_pages(doc, [2, 0], os.path.join(tmp_path, "e.pdf"))
     e = pymupdf.open(os.path.join(tmp_path, "e.pdf"))
     assert len(e) == 2 and "page 3" in e[0].get_text()
+    # pages that share a font and a logo: the extract holds them once, not once per page
+    letter = pymupdf.open()
+    logo = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 300), False)
+    logo.set_rect(logo.irect, (200, 30, 30))
+    xref = 0
+    for i in range(12):
+        page = letter.new_page()
+        page.insert_text((50, 100), f"Side {i + 1} Čačak", fontname="noto", fontfile=str(pt.FONT_SANS), fontsize=14)
+        xref = page.insert_image(pymupdf.Rect(400, 20, 560, 180), pixmap=logo, xref=xref)
+    letter = pymupdf.open("pdf", letter.tobytes(garbage=3, deflate=True))
+    pt.extract_pages(letter, range(12), os.path.join(tmp_path, "letter.pdf"))
+    assert os.path.getsize(os.path.join(tmp_path, "letter.pdf")) < 1.2 * len(letter.tobytes(garbage=3, deflate=True))
     files = pt.split_doc(doc, str(tmp_path), 2, "part")
     assert len(files) == 2 and all(os.path.exists(f) for f in files)
     img = os.path.join(tmp_path, "i.png")
@@ -317,6 +329,9 @@ def test_docx_export(tmp_path):
     seen = []
     pt.export_docx(src, out, progress=lambda d, t: seen.append((d, t)) or True)
     assert os.path.getsize(out) > 1000 and seen
+    # the conversion runs in a process of its own: its error comes back as the reason, not as a broken pipe
+    with pytest.raises(RuntimeError, match="no such file"):
+        pt.export_docx(os.path.join(tmp_path, "gone.pdf"), out)
 
 
 # --- page overlay data ------------------------------------------------------------------------
@@ -363,6 +378,59 @@ def test_page_info_annots_links_fields():
     an.set_field(page, kinds["ime"]["x"], "Trajno")
     an.flatten(doc)
     assert not doc.is_form_pdf and "Trajno" in doc[0].get_text()
+
+
+def _field(page, kind, name, rect, **props):
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = kind, name, pymupdf.Rect(rect)
+    for k, v in props.items():
+        setattr(w, k, v)
+    page.add_widget(w)
+    return next(w for w in page.widgets() if w.field_name == name).xref
+
+
+def test_emptying_a_field_does_not_bring_back_its_default():
+    doc = make_doc(1)
+    page = doc[0]
+    xref = _field(page, pymupdf.PDF_WIDGET_TYPE_TEXT, "ime", (50, 400, 250, 425), field_value="Podrazumevano")
+    doc.xref_set_key(xref, "DV", "(Podrazumevano)")
+    an.set_field(page, xref, "Marko")
+    an.set_field(page, xref, "")  # the user deleted the text
+    assert an.page_fields(page)[0]["v"] == ""
+    assert "Podrazumevano" not in page.get_text("text", clip=pymupdf.Rect(50, 400, 250, 425))
+    assert pymupdf.open("pdf", doc.tobytes())[0].first_widget.field_value == ""
+    an.reset_fields(doc)  # "reset the fields" still means back to the defaults
+    assert an.page_fields(page)[0]["v"] == "Podrazumevano"
+
+
+def test_dropdown_options_keep_value_and_label_apart():
+    """A choice can store "NO" and show "Norway"; the file must get the stored value."""
+    doc = make_doc(1)
+    page = doc[0]
+    xref = _field(page, pymupdf.PDF_WIDGET_TYPE_COMBOBOX, "land", (50, 400, 250, 425),
+                  choice_values=[["RS", "Serbia"], ["NO", "Norway"]], field_value="NO")
+    doc.xref_set_key(xref, "DV", "(NO)")
+    plain = _field(page, pymupdf.PDF_WIDGET_TYPE_COMBOBOX, "avdeling", (50, 440, 250, 465),
+                   choice_values=["Analyse", "Økonomi"], field_value="Analyse")
+    fields = {f["n"]: f for f in an.page_fields(page)}
+    assert fields["land"]["opts"] == [["RS", "Serbia"], ["NO", "Norway"]] and fields["land"]["v"] == "NO"
+    assert fields["avdeling"]["opts"] == [["Analyse", "Analyse"], ["Økonomi", "Økonomi"]]
+    an.set_field(page, xref, "RS")
+    an.set_field(page, plain, "Økonomi")
+    assert doc.xref_get_key(xref, "V") == ("string", "RS")
+    saved = pymupdf.open("pdf", doc.tobytes())
+    assert {f["n"]: f["v"] for f in an.page_fields(saved[0])} == {"land": "RS", "avdeling": "Økonomi"}
+
+    def shown():  # what the boxes themselves show (print, export, flatten, other viewers)
+        baked = pymupdf.open("pdf", doc.tobytes())
+        baked.bake()
+        return baked[0].get_text().split()
+
+    assert "Serbia" in shown() and "RS" not in shown() and "Økonomi" in shown()
+    an.set_field(page, xref, "")  # the empty choice empties the box as well
+    assert doc.xref_get_key(xref, "V") == ("string", "") and "Serbia" not in shown()
+    an.reset_fields(doc)  # back to the default, shown by its label
+    assert doc.xref_get_key(xref, "V") == ("string", "NO") and "Norway" in shown() and "NO" not in shown()
 
 
 # --- annotations -------------------------------------------------------------------------------
