@@ -1,0 +1,8 @@
+# Versions the tests ran against. Python 3.11-3.14, Windows 10/11.
+PyMuPDF==1.28.2
+pywebview==6.2.1
+pythonnet==3.2.1; sys_platform == "win32"
+pyHanko==0.37.0
+cryptography==50.0.1
+pdf2docx==0.5.13
+Pillow==12.3.0

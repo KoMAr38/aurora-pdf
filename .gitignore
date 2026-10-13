@@ -1,0 +1,8 @@
+.venv/
+_to_delete/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec
