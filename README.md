@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 138 automatiske tester. 42 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 139 automatiske tester. 42 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -78,7 +78,7 @@ Koden er rundt 4 300 linjer Python, 4 000 linjer JavaScript og 1 500 linjer CSS.
 | Fil | Tester | Dekker |
 |---|---:|---|
 | `tests/test_engine.py` | 49 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, sladding, bokmerker og eksport |
-| `tests/test_api.py` | 34 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren og installasjonssjekken |
+| `tests/test_api.py` | 35 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 9 | OCR med språkdataene som følger med, digitale ID-er, signering og endringer etter signering |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
 | `tests/e2e/test_ui.py` | 42 | Grensesnittet, styrt med mus og tastatur |

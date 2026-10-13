@@ -535,6 +535,17 @@ def test_theme_setting_and_title_bar(api, tmp_path, monkeypatch):
     assert seen == [False, True]
 
 
+def test_shortcuts_and_pdf_handler_carry_the_window_app_id():
+    """main.py gives the window an explicit taskbar ID. Unless the shortcuts and the PDF handler carry
+    the same ID, Windows pins pythonw.exe itself, which shows Python's icon and opens nothing."""
+    import main
+
+    script = (WEB_DIR.parent / "scripts" / "windows.ps1").read_text(encoding="utf-8-sig")
+    assert f"$appId = '{main.APP_ID}'" in script
+    assert "[Aurora.Link]::SetAppId($lnk, $appId)" in script
+    assert "$k.SetValue('AppUserModelID', $appId)" in script
+
+
 def test_http_server(tmp_path):
     session = Session()
     api = Api(session, Dialogs(), test_mode=False)
