@@ -37,13 +37,18 @@
       { label: A.t("rotateR"), icon: "rotR", run: () => A.edit("rotate", { pages: t, degrees: 90 }), disabled: !can },
       "-",
       { label: A.t("insertBlankAfter"), icon: "insert", run: () => A.edit("insert_blank", { at: Math.max(...t) + 1, like: i }), disabled: !can },
-      { label: A.t("insertFileAfter"), icon: "open", run: () => A.call("insert_file_dialog", { at: Math.max(...t) + 1 }), disabled: !can },
+      { label: A.t("insertFileAfter"), icon: "open", run: () => A.insertFile(Math.max(...t) + 1), disabled: !can },
       { label: n > 1 ? A.t("duplicateN", { n }) : A.t("duplicate"), icon: "copy", run: () => A.edit("duplicate", { pages: t }), disabled: !can },
       { label: n > 1 ? A.t("extractN", { n }) : A.t("extractPage"), icon: "export", run: () => A.extractPages(t) },
       "-",
       { label: n > 1 ? A.t("deleteN", { n }) : A.t("deletePage"), icon: "trash", danger: true, run: () => A.deletePages(t), disabled: !can },
     ];
   };
+  /** Insert a file before page `at`: `path`, or the one the file dialog gives. */
+  A.insertFile = (at, path) => A.withSourcePasswords((pw, opts) => {
+    const asked = Object.keys(pw)[0]; // the file whose owner password was asked for: no dialog again
+    return A.call("insert_file_dialog", { at, paths: [asked || path].filter(Boolean), password: pw[asked] }, opts);
+  });
   A.extractPages = async (pages, extra) => {
     await A.commitPending();
     const r = await A.call("extract_dialog", { pages, ...extra }, { handle: A.askPasswords((x) => A.extractPages(pages, x)) });
@@ -142,7 +147,7 @@
         const a = act.dataset.a;
         if (a === "add") return A.menu([
           { label: A.t("insertBlankEnd"), icon: "blank", run: () => A.edit("insert_blank", { at: S.doc.pages.length }) },
-          { label: A.t("insertFileEnd"), icon: "open", run: () => A.call("insert_file_dialog", { at: S.doc.pages.length }) },
+          { label: A.t("insertFileEnd"), icon: "open", run: () => A.insertFile(S.doc.pages.length) },
           { label: A.t("insertImagesEnd"), icon: "image", run: () => A.call("insert_images_dialog", { at: S.doc.pages.length }) },
         ], e.clientX, e.clientY);
         const t = targets(i);

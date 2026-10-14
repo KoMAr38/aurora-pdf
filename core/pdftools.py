@@ -443,14 +443,15 @@ def insert_blank(doc: pymupdf.Document, at: int, width: float = 595, height: flo
 def load_source(path: str, password: str | None = None) -> pymupdf.Document:
     """Open another file whose pages go into this or a new document (insert, merge).
 
-    Its protection does not come along, so a protected file is only taken from its owner (the same
-    rule as for saving without protection) or when it grants every permission, so nothing is lost.
-    Raises ValueError("SOURCE_PROTECTED") otherwise.
+    Its protection does not come along, so a protected file is only taken with its owner password (the
+    same rule as for saving without protection) or when it grants every permission, so nothing is lost.
+    Raises ValueError("SOURCE_PROTECTED") otherwise, and "WRONG_PASSWORD" for a password that does not
+    open it.
     """
     try:
         doc, info = load_for_editing(path, password)
     except ValueError as exc:
-        if str(exc) == "NEED_PASSWORD":  # nothing asks for a source's password: say what to do instead
+        if str(exc) == "NEED_PASSWORD":  # the owner password opens it as well: ask for that one
             raise ValueError("SOURCE_PROTECTED") from exc
         raise
     every = permissions_int(ALL_PERMS)
@@ -460,8 +461,21 @@ def load_source(path: str, password: str | None = None) -> pymupdf.Document:
     return doc
 
 
+def check_source(path: str, password: str | None = None) -> None:
+    """Raise what :func:`load_source` would, before anything is asked or written. Only an encrypted file
+    is read in full."""
+    try:
+        with pymupdf.open(path) as src:  # reads the cross-reference table, not the pages
+            if not src.is_pdf or _encrypt_dict(src) is None:
+                return
+    except Exception:  # load_source says what is wrong with it
+        pass
+    load_source(path, password).close()
+
+
 def insert_pdf_file(doc: pymupdf.Document, path: str, at: int, password: str | None = None) -> int:
-    """Insert every page of another PDF before index ``at``. Returns the page count added."""
+    """Insert every page of another file before index ``at`` (an image becomes one page). Returns the page
+    count added."""
     src = load_source(path, password)
     try:
         at = max(0, min(at, len(doc)))
@@ -472,18 +486,12 @@ def insert_pdf_file(doc: pymupdf.Document, path: str, at: int, password: str | N
 
 
 def insert_images(doc: pymupdf.Document, paths: Sequence[str], at: int) -> int:
-    """Insert one page per image before index ``at``, page sized to the image."""
+    """Insert one page per image before index ``at``, page sized to the image. Through load_source, so a
+    protected PDF under another name is refused like any other."""
     at = max(0, min(at, len(doc)))
     added = 0
     for p in paths:
-        img = pymupdf.open(p)
-        try:
-            pdf = pymupdf.open("pdf", img.convert_to_pdf())
-        finally:
-            img.close()
-        doc.insert_pdf(pdf, start_at=at + added)
-        added += len(pdf)
-        pdf.close()
+        added += insert_pdf_file(doc, p, at + added)
     if not added:
         raise ValueError("no images inserted")
     return added
@@ -808,12 +816,17 @@ def export_docx(pdf_path: str, out_path: str, progress: Progress = None, passwor
     writer.close()  # only the child writes now: the end of the pipe is the end of the child
     done = total = 0
     error = None
+    piped = True
     try:
-        while True:
-            try:
-                msg = reader.recv() if reader.poll(0.25) else None
-            except (EOFError, OSError):  # the child has closed its end: it is done (Windows says so in poll)
-                break
+        while piped or proc.is_alive():  # until the child is gone: a cancel still stops it if the pipe fails first
+            msg = None
+            if not piped:
+                proc.join(0.25)
+            else:
+                try:
+                    msg = reader.recv() if reader.poll(0.25) else None
+                except (EOFError, OSError):  # the child has closed its end (Windows says so in poll)
+                    piped = False
             if msg and msg[0] == "progress":
                 done, total = msg[1], msg[2]
             elif msg:

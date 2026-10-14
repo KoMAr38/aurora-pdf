@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 157 automatiske tester. 50 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 166 automatiske tester. 52 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -49,7 +49,7 @@ tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e
 
 Motoren er PyMuPDF, som bygger på MuPDF. pyHanko lager og kontrollerer sertifikatsignaturene, cryptography lager nøklene til de digitale ID-ene, pdf2docx står for Word-eksporten, og Pillow koder sidebildene. Grensesnittet er vanlig HTML, CSS og JavaScript i et WebView2-vindu fra pywebview. Det har ikke noe byggesteg: filene i `web/` er de som kjører.
 
-Koden er rundt 4 400 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS. Testene er 3 300 linjer.
+Koden er rundt 4 700 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS. Testene er 3 600 linjer.
 
 ### Valg som er verdt å se på
 
@@ -63,7 +63,7 @@ Koden er rundt 4 400 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS.
 
 **Word-eksporten går i en egen prosess.** PyMuPDF tåler ikke å brukes fra to tråder samtidig, så all bruk går gjennom én lås. Konverteringen til Word kan ta minutter. Den får en kopi av dokumentet og kjører i en egen prosess, så sidene lastes mens den jobber, og «Avbryt» stopper prosessen.
 
-**Beskyttelsen følger med kopiene.** Sider som trekkes ut, deles opp eller komprimeres, får samme passord og tillatelser som dokumentet. En fil med begrensninger kan bare slås sammen med andre eller settes inn i et annet dokument av eieren, siden resultatet ikke får begrensningene med seg.
+**Beskyttelsen følger med kopiene.** Sider som trekkes ut, deles opp eller komprimeres, får samme passord og tillatelser som dokumentet. En fil med begrensninger kan bare slås sammen med andre eller settes inn i et annet dokument av eieren, siden resultatet ikke får begrensningene med seg. Programmet spør derfor etter eierpassordet til den filen.
 
 **Kommentarene er vanlige PDF-kommentarer.** Uthevinger, tegninger, figurer og notater lagres som standard PDF-annotasjoner, så andre PDF-lesere viser dem og kan redigere dem.
 
@@ -75,17 +75,17 @@ Koden er rundt 4 400 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS.
 
 **Ett stilark for begge temaene.** Alle fargene ligger i variabler. Det mørke temaet er standardverdiene, og det lyse overstyrer dem i én blokk. Tittellinjen i Windows får de samme fargene, og vinduet starter i riktig farge, så det ikke blinker mørkt før et lyst tema er lastet.
 
-**Oversettelsene er testet.** De 526 tekstene i grensesnittet ligger i én tabell med tre språk. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler, ikke brukes, eller har ulike plassholdere på de tre språkene.
+**Oversettelsene er testet.** De 528 tekstene i grensesnittet ligger i én tabell med tre språk. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler, ikke brukes, eller har ulike plassholdere på de tre språkene.
 
 ### Testing
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 51 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker og eksport |
-| `tests/test_api.py` | 43 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_engine.py` | 57 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker og eksport |
+| `tests/test_api.py` | 44 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 9 | OCR med språkdataene som følger med, digitale ID-er, signering og endringer etter signering |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
-| `tests/e2e/test_ui.py` | 50 | Grensesnittet, styrt med mus og tastatur |
+| `tests/e2e/test_ui.py` | 52 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
 
@@ -156,6 +156,10 @@ Resten står i `START_HER.md`.
 
 **En kodegjennomgang fant åtte feil til.** Ctrl+S rett etter skriving i et skjemafelt meldte «Lagret», men filen manglet den nye teksten, fordi feltet sender teksten først når det mister fokus. Komprimering gjorde en signatur ugyldig uten å spørre. Sider som ble trukket ut av en passordbeskyttet fil, ble lagret uten passord, og en fil med begrensninger kunne slås sammen til en ny fil uten dem. En lenke kunne føre til feil side etter at sider var satt inn foran målet. Og en nedtrekksliste lagret navnet «Norway» der skjemaet ventet koden «NO». Alle åtte har tester. En ny gjennomgang av rettelsene fant i tillegg at 30 sider trukket ut av en fil på 350 kB ble nesten 10 MB, fordi hver side fikk sin egen kopi av skriften og logoen. Nå deler sidene dem, og uttrekket er like stort som originalen.
 
+**Č, Ć og Đ forsvant fra skjemafeltene.** Teksten ble lagret riktig, men MuPDF tegner tekst utenfor Windows-1252 med en annen skrift. I et felt som velger skriftstørrelsen selv, fikk teksten størrelse 0, og i et felt på én linje havnet den under feltet. Utskrift, eksport og andre PDF-lesere viste derfor feltet tomt. Nå får teksten den størrelsen MuPDF ville gitt Helvetica, og linjen flyttes opp i feltet. Et skjema som ber leseren tegne feltene selv (NeedAppearances), tegnes én gang når filen åpnes. En prøvekjøring med 700 tilfeldige latinske og kyrilliske navn i felt av ulik størrelse viste at MuPDF dropper ord som ikke får plass, også når linjen er nøyaktig like bred som plassen. Nå regnes plassen slik MuPDF regner den, med ett punkt til overs.
+
+**Feltene ble skrevet om når de ble tegnet.** Gjennomgangene av rettelsen fant at PyMuPDF skriver hele feltet på nytt når teksten tegnes. Skjemaets egen skrift ble byttet ut med Helvetica, handlinger knyttet til feltet forsvant, og et passordfelt ble tegnet med lesbar tekst. Nå endres bare verdien og tegningen, og et passord tegnes som prikker. Testen `test_a_form_that_asks_readers_to_draw_its_fields` bygger et skjema med alle disse tilfellene.
+
 ---
 
 ## Forbehold
@@ -172,7 +176,7 @@ Resten står i `START_HER.md`.
 
 **Word-eksporten er en tilnærming.** Spalter og kompliserte tabeller blir sjelden helt like originalen.
 
-**Skjemafelt viser ikke Č, Ć og Đ i selve filen.** Teksten lagres riktig og vises i programmet, men feltet tegnes med standardskriften for skjemaer, som mangler disse bokstavene. Utskrift og eksport viser derfor feltet tomt, og det kan andre PDF-lesere også gjøre. Lister der flere valg kan merkes samtidig, kan ikke fylles ut.
+**Listebokser viser ikke valgene i selve filen.** Valgene lagres og vises i programmet, men MuPDF tegner listen uten å merke dem. Utskrift og eksport viser derfor alle alternativene likt.
 
 **Ytelsestallene er fra en container uten skjermkort**, ikke fra en vanlig PC.
 

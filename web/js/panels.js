@@ -383,7 +383,7 @@
     A.$("#oExt", root).onclick = () => A.extractPages(pick());
     A.$("#oDel", root).onclick = () => A.deletePages(pick());
     A.$("#oBlank", root).onclick = () => A.edit("insert_blank", { at: after(), like: Math.max(0, after() - 1) });
-    A.$("#oFile", root).onclick = () => A.call("insert_file_dialog", { at: after() });
+    A.$("#oFile", root).onclick = () => A.insertFile(after());
     A.$("#oImg", root).onclick = () => A.call("insert_images_dialog", { at: after() });
     A.$("#oSplit", root).onclick = async () => {
       const n = await A.prompt(A.t("splitDoc"), A.t("splitEvery"), "1");
@@ -516,7 +516,7 @@
     };
     if (A.$("#mCur", root)) A.$("#mCur", root).onclick = () => { if (!mergeList.includes(S.doc.path)) mergeList.unshift(S.doc.path); draw(); };
     A.$("#mGo", root).onclick = async () => {
-      const r = await A.call("merge_run", { paths: mergeList });
+      const r = await A.withSourcePasswords((passwords, opts) => A.call("merge_run", { paths: mergeList, passwords }, opts));
       if (!r) return;
       mergeList = [];
       draw();

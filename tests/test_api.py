@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import time
 import urllib.error
 import urllib.request
@@ -239,24 +240,46 @@ def test_extracted_and_split_pages_keep_the_protection(api, tmp_path):
     assert api._dialogs.script == [str(tmp_path / "never.pdf")]
 
 
-def test_merge_and_insert_take_no_protected_file_of_someone_else(api, tmp_path):
-    """The result would not carry that file's protection, so only its owner may do this
-    (the rule for saving without protection)."""
+def test_merge_and_insert_take_a_protected_file_with_its_owner_password(api, tmp_path):
+    """The result does not carry that file's protection, so only its owner may do this (the rule for
+    saving without protection). The answer names the file, and the interface asks for the password."""
     theirs = str(tmp_path / "theirs.pdf")
     pt.save_pdf(make_doc(2), theirs, owner_pw="boss", allowed=["print"])  # opens without a password
+    locked = str(tmp_path / "locked.pdf")
+    pt.save_pdf(make_doc(1), locked, user_pw="pw", owner_pw="boss", allowed=["print"])
     mine = save_tmp(make_doc(1), tmp_path, "mine.pdf")
     out = tmp_path / "merged.pdf"
     answers(api, str(out))
-    assert call(api, "merge_run", paths=[mine, theirs])["error"] == "SOURCE_PROTECTED"
-    assert not out.exists()
+    files = [mine, theirs, locked]
+    r = call(api, "merge_run", paths=files)
+    assert (r["error"], r["path"], r["name"]) == ("SOURCE_PROTECTED", theirs, "theirs.pdf")
+    assert api._dialogs.script == [str(out)] and not out.exists()  # asked before where the result goes
+    r = call(api, "merge_run", paths=files, passwords={theirs: "boss", locked: "pw"})
+    assert (r["error"], r["path"]) == ("SOURCE_PROTECTED", locked)  # the open password is not enough
+    r = call(api, "merge_run", paths=files, passwords={theirs: "boss", locked: "nope"})
+    assert (r["error"], r["path"]) == ("WRONG_PASSWORD", locked)
+    assert ok(call(api, "merge_run", paths=files, passwords={theirs: "boss", locked: "boss"}))["pages"] == 4
+    assert not pymupdf.open(str(out)).is_encrypted
+
     res, _ = opened(api, tmp_path, pages=2)
     revs = [p[2] for p in res["doc"]["pages"]]
-    assert call(api, "insert_file_dialog", at=1, paths=[theirs])["error"] == "SOURCE_PROTECTED"
-    locked = str(tmp_path / "locked.pdf")
-    pt.save_pdf(make_doc(1), locked, user_pw="pw", owner_pw="boss")  # nothing in the app asks for its password
+    answers(api, theirs)  # picked in the file dialog
+    r = call(api, "insert_file_dialog", at=1)
+    assert (r["error"], r["path"]) == ("SOURCE_PROTECTED", theirs)
     assert call(api, "insert_file_dialog", at=1, paths=[locked])["error"] == "SOURCE_PROTECTED"
+    assert call(api, "insert_file_dialog", at=1, paths=[locked], password="nope")["error"] == "WRONG_PASSWORD"
     d = call(api, "state")["doc"]
     assert [p[2] for p in d["pages"]] == revs and not d["dirty"]
+    assert ok(call(api, "insert_file_dialog", at=1, paths=[theirs], password="boss"))["count"] == 2
+    renamed = str(tmp_path / "theirs.dat")  # a PDF by what it holds, whatever it is called
+    shutil.copy(theirs, renamed)
+    r = call(api, "insert_file_dialog", at=0, paths=[renamed])
+    assert (r["error"], r["path"]) == ("SOURCE_PROTECTED", renamed)
+    answers(api, [renamed])
+    assert call(api, "insert_images_dialog", at=0)["error"] == "SOURCE_PROTECTED"
+    pics = tmp_path / "pics.pdf"
+    answers(api, [renamed], str(pics))
+    assert call(api, "images_to_pdf_dialog")["error"] == "SOURCE_PROTECTED" and not pics.exists()
     free = str(tmp_path / "free.pdf")
     pt.save_pdf(make_doc(1), free, owner_pw="boss")  # encrypted, but every permission granted: nothing to lose
     answers(api, str(out))
@@ -329,6 +352,22 @@ def test_forms_through_api(api, tmp_path):
     ok(call(api, "flatten"))
     d = call(api, "state")["doc"]
     assert not d["forms"] and "Marko" in call(api, "page_text", page=0)["text"]
+
+
+def test_open_draws_the_fields_of_a_form_that_asks_for_it(api, tmp_path):
+    """NeedAppearances: the fields are drawn once on opening, which is not a change to save."""
+    doc = make_doc(1)
+    w = pymupdf.Widget()
+    w.field_name, w.field_type, w.rect = "mesto", pymupdf.PDF_WIDGET_TYPE_TEXT, pymupdf.Rect(50, 400, 250, 425)
+    w.field_value = "Stari"
+    doc[0].add_widget(w)
+    doc.xref_set_key(doc[0].first_widget.xref, "V", pymupdf.get_pdf_str("Đurđevac"))  # the old drawing stays
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm/NeedAppearances", "true")
+    d = ok(call(api, "open_path", path=save_tmp(doc, tmp_path, "need.pdf")))["doc"]
+    assert not d["dirty"] and d["undo"] == ""
+    ok(call(api, "flatten"))
+    text = call(api, "page_text", page=0)["text"]
+    assert "Đurđevac" in text and "Stari" not in text
 
 
 def test_links_follow_their_page_when_pages_move(api, tmp_path):

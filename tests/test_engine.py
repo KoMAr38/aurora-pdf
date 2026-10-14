@@ -334,6 +334,20 @@ def test_docx_export(tmp_path):
         pt.export_docx(os.path.join(tmp_path, "gone.pdf"), out)
 
 
+def test_docx_export_stops_on_cancel_after_its_pipe_failed(tmp_path, monkeypatch):
+    """It used to wait for the whole conversion once the pipe failed, past any cancel."""
+    pytest.importorskip("pdf2docx")
+    import multiprocessing.connection as mpc
+
+    def broken(self, timeout=0.0):
+        raise OSError("the pipe broke")
+
+    monkeypatch.setattr(mpc._ConnectionBase, "poll", broken)  # the parent's end only: the child is a new process
+    src = save_tmp(make_doc(2), tmp_path, "w.pdf")
+    with pytest.raises(pt.Cancelled):
+        pt.export_docx(src, os.path.join(tmp_path, "w.docx"), progress=lambda d, t: False)
+
+
 # --- page overlay data ------------------------------------------------------------------------
 
 
@@ -431,6 +445,160 @@ def test_dropdown_options_keep_value_and_label_apart():
     assert doc.xref_get_key(xref, "V") == ("string", "") and "Serbia" not in shown()
     an.reset_fields(doc)  # back to the default, shown by its label
     assert doc.xref_get_key(xref, "V") == ("string", "NO") and "Norway" in shown() and "NO" not in shown()
+
+
+def _shown(doc, rect, pno=0):
+    """The words a field shows once the fields are burnt into the page, as print, export and other readers
+    see them."""
+    baked = pymupdf.open("pdf", doc.tobytes())
+    baked.bake()
+    r = pymupdf.Rect(rect)
+    return [(w[4], pymupdf.Rect(w[:4])) for w in baked[pno].get_text("words")
+            if r.contains((pymupdf.Rect(w[:4]).tl + pymupdf.Rect(w[:4]).br) / 2)]
+
+
+def _fits(shown, rect, text):
+    """Every word of ``text`` in the box, readable (MuPDF drew Č, Ć, Đ at size 0) and inside its width."""
+    r = pymupdf.Rect(rect)
+    return [w for w, _ in shown] == text.split() and all(b.height > 5 and r.x0 <= b.x0 and b.x1 <= r.x1
+                                                         for _, b in shown)
+
+
+def test_serbian_letters_show_in_the_fields():
+    """Text outside Windows-1252 takes MuPDF's other font, which it drew at size 0 in a field that sizes
+    its text itself and below the box in a one-line field."""
+    doc = make_doc(1)
+    page = doc[0]
+    TEXT = pymupdf.PDF_WIDGET_TYPE_TEXT
+    cases = [  # (box, field, value, what the box shows)
+        ((50, 300, 300, 325), dict(), "Marko Veselinović", None),
+        ((50, 340, 300, 380), dict(text_fontsize=11), "Đurđevac i Čačak", None),
+        ((50, 400, 300, 470), dict(field_flags=an.FF_MULTILINE), "Љубљана, Ђаковица и Ниш у пољу које прелама ред", None),
+        ((50, 490, 300, 515), dict(field_type=pymupdf.PDF_WIDGET_TYPE_COMBOBOX, field_value="DR",
+                                   choice_values=[["MO", "Морава"], ["DR", "Drina"]]), "MO", "Морава"),
+    ]
+    xrefs = []
+    for i, (box, props, value, _) in enumerate(cases):
+        xrefs.append(_field(page, props.pop("field_type", TEXT), f"f{i}", box, **props))
+        an.set_field(page, xrefs[-1], value)
+    for (box, _, value, label), xref in zip(cases, xrefs):
+        assert _fits(_shown(doc, box), box, label or value), value
+    assert doc.xref_get_key(xrefs[0], "DA")[1].endswith(" 0 Tf")  # the field still sizes its text itself:
+    long_name = "Marko Veselinović Đorđević Ćirković Šćekić"  # a longer name gets smaller
+    an.set_field(page, xrefs[0], long_name)
+    assert _fits(_shown(doc, cases[0][0]), cases[0][0], long_name)
+    saved = pymupdf.open("pdf", doc.tobytes())
+    assert [f["v"] for f in an.page_fields(saved[0])] == [long_name] + [c[2] for c in cases[1:]]
+
+
+def _form_made_elsewhere():
+    """A form the way other programs make them: /AcroForm an object of its own that asks readers to draw the
+    fields, values changed after the drawings were made, the form's own font, rich text and no border, a
+    value longer than MaxLen, actions shared by two fields, a password, a hidden helper field without a box,
+    and one field on two pages whose second widget names the wrong page."""
+    doc = make_doc(2)
+    page = doc[0]
+    x = {name: _field(page, pymupdf.PDF_WIDGET_TYPE_TEXT, name, box, field_value="Stari", **props)
+         for name, box, props in (("ime", (50, 300, 300, 325), {}), ("grad", (50, 340, 300, 365), {}),
+                                  ("pin", (50, 380, 300, 405), {"field_flags": an.FF_PASSWORD}),
+                                  ("skriveno", (0, 0, 10, 10), {}))}
+    for name, value in (("ime", "Marko Veselinović"), ("grad", "Čačak"), ("pin", "tajna"), ("skriveno", "x")):
+        doc.xref_set_key(x[name], "V", pymupdf.get_pdf_str(value))  # the drawings still say "Stari"
+    for key, value in (("DA", "(/ArialMT 0 Tf 0 0 1 rg)"), ("DS", "(font: Arial)"), ("BS", "<</S/S/W 0>>"),
+                       ("MaxLen", "3")):
+        doc.xref_set_key(x["grad"], key, value)
+    doc.xref_set_key(x["skriveno"], "Rect", "[0 0 0 0]")
+    doc.xref_set_key(x["ime"], "RV", "(<body><p>Marko Veselinović</p></body>)")
+    aa = doc.get_new_xref()
+    doc.update_object(aa, "<</K<</S/ResetForm>>>>")  # not JavaScript, which PyMuPDF drops
+    for name in ("ime", "grad"):
+        doc.xref_set_key(x[name], "AA", f"{aa} 0 R")
+    reka, kids = doc.get_new_xref(), (doc.get_new_xref(), doc.get_new_xref())  # one field, two widgets
+    doc.update_object(reka, f"<</FT/Tx/T(reka)/DA(/Helv 0 Tf 0 g)/V{pymupdf.get_pdf_str('Морава')}"
+                            f"/DV{pymupdf.get_pdf_str('Морава')}/Kids[{kids[0]} 0 R {kids[1]} 0 R]>>")
+    for kid, pno in zip(kids, (0, 1)):
+        px = doc.page_xref(pno)
+        doc.update_object(kid, f"<</Type/Annot/Subtype/Widget/Rect[50 30 300 55]/Parent {reka} 0 R/F 4"
+                               f"/P {doc.page_xref(0)} 0 R>>")
+        kind, annots = doc.xref_get_key(px, "Annots")
+        doc.xref_set_key(px, "Annots", (annots[:-1] if kind == "array" else "[") + f" {kid} 0 R]")
+    cat = doc.pdf_catalog()
+    kind, form = doc.xref_get_key(cat, "AcroForm")
+    af = int(form.split()[0]) if kind == "xref" else doc.get_new_xref()
+    if kind != "xref":
+        doc.update_object(af, form)
+        doc.xref_set_key(cat, "AcroForm", f"{af} 0 R")
+    doc.xref_set_key(af, "Fields", doc.xref_get_key(af, "Fields")[1][:-1] + f" {reka} 0 R]")
+    doc.xref_set_key(af, "NeedAppearances", "true")
+    return pymupdf.open("pdf", doc.tobytes()), af, x | {"aa": aa, "reka": kids[0]}
+
+
+def test_a_form_that_asks_readers_to_draw_its_fields():
+    """NeedAppearances: MuPDF drew such fields for the screen only, without Č, Ć, Đ, and flattening burnt
+    in the old drawings. Opening draws them once, and nothing else of the fields changes."""
+    doc, af, x = _form_made_elsewhere()
+    own = {k: doc.xref_get_key(x["grad"], k) for k in ("DA", "DS", "BS", "MaxLen")}
+    actions = doc.xref_object(x["aa"], compressed=True)
+    an.settle_fields(doc)
+    assert doc.xref_get_key(af, "NeedAppearances") == ("bool", "false")
+    for box, text in (((50, 300, 300, 325), "Marko Veselinović"), ((50, 340, 300, 365), "Čačak")):
+        assert _fits(_shown(doc, box), box, text), text
+    reka = (50, 540, 300, 565)
+    assert _fits(_shown(doc, reka), reka, "Морава") and _fits(_shown(doc, reka, 1), reka, "Морава")
+    assert {k: doc.xref_get_key(x["grad"], k) for k in own} == own  # its font, rich text, border and MaxLen
+    assert "tajna" not in _shown(doc, (50, 380, 300, 405))[0][0]  # a password is never drawn readable
+    values = {"ime": "Marko Veselinović", "grad": "Čačak", "pin": "tajna", "skriveno": "x", "reka": "Морава"}
+    assert {f["n"]: f["v"] for f in an.page_fields(doc[0])} == values
+    assert "Veselinović" in doc[0].get_text()  # the screen shows the same
+    assert doc.xref_get_key(x["ime"], "RV")[0] == "string"  # same value, same rich text
+    an.set_field(doc[0], x["grad"], "Novi Sad")  # typing keeps to MaxLen, and keeps the field as it is
+    assert doc.xref_get_key(x["grad"], "V") == ("string", "Nov")
+    assert {k: doc.xref_get_key(x["grad"], k) for k in own} == own
+    an.set_field(doc[0], x["ime"], "Novo ime")
+    assert doc.xref_get_key(x["ime"], "RV")[0] == "null"  # else readers would show the old rich text
+    assert doc.xref_object(x["aa"], compressed=True) == actions
+    an.set_field(doc[0], x["reka"], "Ниш")
+    assert an.reset_fields(doc) == 6  # the hidden field and both widgets of "reka" too, as one field
+    for pno in (0, 1):
+        doc[pno].get_pixmap(dpi=20)  # rendering a page must not draw a widget again its own way
+        assert _fits(_shown(doc, reka, pno), reka, "Морава"), pno
+
+
+def test_a_copied_page_shows_what_its_fields_hold():
+    """A copied page's widget names its field as parent, but the field's /Kids does not list it."""
+    doc, af, x = _form_made_elsewhere()
+    doc.xref_set_key(af, "NeedAppearances", "false")  # so the widgets of "reka" are not drawn yet
+    pt.duplicate_pages(doc, [0])
+    an.set_field(doc[0], x["reka"], "Đerdap")
+    reka = (50, 540, 300, 565)
+    for pno in (0, 1, 2):  # the page, its copy, and the field's widget on the old second page
+        doc[pno].get_pixmap(dpi=20)  # MuPDF draws a widget that has no drawing yet, its own way
+        assert _fits(_shown(doc, reka, pno), reka, "Đerdap"), pno
+
+
+def test_a_form_that_cannot_be_drawn_keeps_asking_readers(monkeypatch):
+    doc, af, _ = _form_made_elsewhere()
+    monkeypatch.setattr(an, "_widgets", lambda page: iter(()) if page.number == 0 else 1 / 0)  # page 2 unreadable
+    with pytest.raises(ZeroDivisionError):
+        an.settle_fields(doc)
+    assert doc.xref_get_key(af, "NeedAppearances") == ("bool", "true")
+
+
+def test_list_with_several_choices():
+    doc = make_doc(1)
+    page = doc[0]
+    xref = _field(page, pymupdf.PDF_WIDGET_TYPE_LISTBOX, "jezici", (50, 300, 300, 360), field_value="no",
+                  choice_values=[["sr", "Srpski"], ["no", "Norsk"], ["en", "English"]], field_flags=an.FF_MULTISELECT)
+    doc.xref_set_key(xref, "DV", "[(no)(en)]")
+    f = an.page_fields(page)[0]
+    assert f["multi"] and f["v"] == ["no"]
+    an.set_field(page, xref, ["sr", "en"])
+    assert doc.xref_get_key(xref, "I") == ("array", "[0 2]")  # their places, which other readers mark
+    assert an.page_fields(pymupdf.open("pdf", doc.tobytes())[0])[0]["v"] == ["sr", "en"]
+    an.reset_fields(doc)
+    assert an.page_fields(page)[0]["v"] == ["no", "en"] and doc.xref_get_key(xref, "I") == ("array", "[1 2]")
+    an.set_field(page, xref, [])
+    assert an.page_fields(page)[0]["v"] == [] and doc.xref_get_key(xref, "I")[0] == "null"
 
 
 # --- annotations -------------------------------------------------------------------------------

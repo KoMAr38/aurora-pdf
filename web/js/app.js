@@ -94,6 +94,20 @@
     if (pw == null) return null;
     return handleOpen(await A.call("open_path", { path, password: pw }, { raw: true, quiet: true }));
   }
+  /** Insert and merge: `send(passwords, opts)` again with the owner password of each protected file the
+   *  backend names (only its owner may take its pages out), until it is done. Resolves to its answer, or null. */
+  A.withSourcePasswords = async (send, passwords = {}) => {
+    const r = await send(passwords, { raw: true, handle: (e) => !!e.path });
+    if (!r || r.ok !== false || !r.path) return r && r.ok ? r : null;
+    const wrong = r.error === "WRONG_PASSWORD"; // else a password that opens the file but is not the owner's
+    const hint = wrong || passwords[r.path] ? `<p class="hint warn">${A.esc(A.t(wrong ? "wrongPw" : "notOwnerPw"))}</p>` : "";
+    const pw = await A.modal({
+      title: A.t("needPw"),
+      body: `<p>${A.esc(A.t("sourcePwSub", { name: r.name }))}</p><div class="field"><label>${A.esc(A.t("ownerPw"))}</label><input class="input" id="srcPw" type="password" autocomplete="off"></div>${hint}`,
+      buttons: [{ label: A.t("cancel"), kind: "ghost", value: null }, { label: A.t("unlock"), kind: "primary", onClick: (m) => $("#srcPw", m.el).value }],
+    });
+    return pw == null ? null : A.withSourcePasswords(send, { ...passwords, [r.path]: pw });
+  };
   function afterOpen() {
     A.setMode("select");
     A.clearTextSelection();
@@ -482,7 +496,7 @@
         buttons: [{ label: A.t("cancel"), kind: "ghost", value: null }, { label: A.t("dropInsert"), kind: "", value: "insert" }, { label: A.t("dropOpen"), kind: "primary", value: "open" }],
       });
       if (v === "insert") {
-        for (const p of pdfs) await A.call("insert_file_dialog", { at: S.doc.pages.length, paths: [p] });
+        for (const p of pdfs) await A.insertFile(S.doc.pages.length, p);
         return;
       }
       if (v !== "open") return;

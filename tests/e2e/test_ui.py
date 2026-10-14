@@ -456,6 +456,24 @@ def test_dropdown_shows_labels_and_stores_values(ui, tmp_path):
     assert ui.js("Aurora.V.pages[0].info.fields.find(f => f.n === 'land').v") == "SE"
 
 
+def test_list_takes_several_choices(ui, tmp_path):
+    doc = pymupdf.open(ui.docs["plain"])
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_LISTBOX, "jezici", pymupdf.Rect(50, 300, 250, 360)
+    w.choice_values = [["sr", "Srpski"], ["no", "Norsk"], ["en", "English"]]
+    w.field_value, w.field_flags = "no", 1 << 21  # MultiSelect
+    doc[0].add_widget(w)
+    path = tmp_path / "jezici.pdf"
+    doc.save(str(path))
+    ui.open(str(path), copy=False)
+    sel = ui.page.locator('.pg[data-i="0"] .fx select[title="jezici"]')
+    assert sel.evaluate("s => s.multiple && [...s.selectedOptions].map(o => o.value)") == ["no"]
+    sel.select_option(["sr", "en"])
+    ui.idle()
+    assert ui.js("Aurora.V.pages[0].info.fields.find(f => f.n === 'jezici').v") == ["sr", "en"]
+    assert ui.toasts() == []
+
+
 def _draw_signature(ui):
     ui.page.wait_for_selector(".scrim canvas.pad")
     box = ui.page.locator(".scrim canvas.pad").bounding_box()
@@ -790,6 +808,34 @@ def test_combine_files(ui, docs):
     d = pymupdf.open(out)
     assert len(d) == 7
     assert "Tredje kvartal" in d[0].get_text()
+
+
+def test_protected_file_goes_in_with_its_owner_password(ui, docs):
+    theirs = ui.tmp / "theirs.pdf"
+    pt.save_pdf(pymupdf.open(docs["plain"]), str(theirs), owner_pw="boss", allowed=["print"])
+    n, ours = len(pymupdf.open(theirs)), len(pymupdf.open(docs["report"]))
+    ui.open("report")
+    ui.panel("organize")
+    ui.dialogs(theirs)
+    ui.page.click("#oFile")
+    ui.page.fill(".scrim:not(.out) #srcPw", "nope")
+    ui.modal_button(ui.t("unlock"))
+    ui.page.wait_for_selector(".scrim:not(.out) .hint.warn")  # wrong: asked again
+    ui.page.fill(".scrim:not(.out) #srcPw", "boss")
+    ui.modal_button(ui.t("unlock"))
+    ui.page.wait_for_function("(n) => Aurora.S.doc.pages.length === n", arg=ours + n, timeout=20000)
+
+    ui.panel("combine")
+    ui.dialogs([docs["report"], str(theirs)])
+    ui.page.click("#mPick")
+    ui.page.wait_for_function("document.querySelectorAll('#mList .mrow').length === 2")
+    out = ui.tmp / "merged.pdf"
+    ui.dialogs(out)  # asked for after the password
+    ui.page.click("#mGo")
+    ui.page.fill(".scrim:not(.out) #srcPw", "boss")
+    ui.modal_button(ui.t("unlock"))
+    ui.page.wait_for_function("document.querySelectorAll('.toast.good').length > 0", timeout=20000)
+    assert len(pymupdf.open(out)) == ours + n
 
 
 # ---------------------------------------------------------------- saving, printing, guarding

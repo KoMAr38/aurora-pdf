@@ -86,7 +86,7 @@ window.Aurora = window.Aurora || {};
     ["e_SAVE_AS_COPY", "Fajl je zaštićen lozinkom vlasnika koju nemaš, pa se čuva kao kopija.", "This file has an owner password you don't have, so it is saved as a copy.", "Filen har et eierpassord du ikke har, så den lagres som en kopi."],
     ["e_NOT_SUPPORTED", "Ovaj tip fajla nije podržan.", "This file type isn't supported.", "Denne filtypen støttes ikke."],
     ["e_EMPTY_SIGNATURE", "Potpis je prazan.", "The signature is empty.", "Signaturen er tom."],
-    ["e_SOURCE_PROTECTED", "Fajl koji dodaješ je zaštićen, pa samo vlasnik može da ga doda: otvori ga ovde lozinkom vlasnika, sačuvaj ga bez zaštite, pa ga dodaj.", "The file you're adding is protected, so only its owner can add it: open it here with the owner password, save it without protection, then add it.", "Filen du legger til, er beskyttet, så bare eieren kan legge den til: åpne den her med eierpassordet, lagre den uten beskyttelse, og legg den til etterpå."],
+    ["e_SOURCE_PROTECTED", "Zaštićen fajl može da doda samo vlasnik, uz lozinku vlasnika.", "Only the owner can add a protected file, with the owner password.", "Bare eieren kan legge til en beskyttet fil, med eierpassordet."],
     ["e_OPEN_FILE", "Taj fajl je sad otvoren ovde. Izaberi drugo ime.", "That file is open here right now. Pick another name.", "Den filen er åpen her nå. Velg et annet navn."],
 
     /* ---- undo labels ---- */
@@ -193,6 +193,8 @@ window.Aurora = window.Aurora || {};
     ["password", "Lozinka", "Password", "Passord"],
     ["passwordAgain", "Ponovi lozinku", "Repeat the password", "Gjenta passordet"],
     ["wrongPw", "Ta lozinka nije tačna. Pokušaj ponovo.", "That password is wrong. Try again.", "Passordet er feil. Prøv igjen."],
+    ["sourcePwSub", "{name} je zaštićen, pa samo vlasnik može da doda njegove strane. Unesi lozinku vlasnika.", "{name} is protected, so only its owner can add its pages. Enter the owner password.", "{name} er beskyttet, så bare eieren kan legge til sidene. Skriv inn eierpassordet."],
+    ["notOwnerPw", "Ta lozinka otvara fajl, ali za ovo treba lozinka vlasnika.", "That password opens the file, but this takes the owner password.", "Det passordet åpner filen, men dette krever eierpassordet."],
     ["unlock", "Otključaj", "Unlock", "Lås opp"],
     ["restrictedToast", "Otvoreno sa ograničenim pravima: autor je zabranio izmene.", "Opened with limited rights: the author restricted editing.", "Åpnet med begrensede rettigheter: forfatteren har sperret redigering."],
     ["scannedBanner", "Ovo liči na skeniran dokument. Prepoznaj tekst da bi mogao da ga pretražuješ i kopiraš.", "This looks like a scanned document. Recognize the text to search and copy it.", "Dette ser ut som et skannet dokument. Gjenkjenn teksten for å kunne søke i og kopiere den."],

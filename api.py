@@ -211,6 +211,14 @@ class Api:
             raise SessionError("OPEN_FILE")
         return out
 
+    @staticmethod
+    def _owner_password(path: str, exc: ValueError) -> dict:
+        """A protected file going into a document (insert, merge) takes its owner password: the interface
+        asks for it and sends it along with ``path`` the next time. Any other error goes on up."""
+        if str(exc) not in ("SOURCE_PROTECTED", "WRONG_PASSWORD"):
+            raise exc
+        return {"ok": False, "error": str(exc), "path": path, "name": os.path.basename(path)}
+
     def _author(self) -> str:
         return settings.load().get("author", "") or ""
 
@@ -529,14 +537,19 @@ class Api:
             or self._dialogs.open(False, self._types("pdf", "images", "all"), self._dir())
         if not paths:
             return {"ok": False, "error": "CANCELLED"}
+        password = a.get("password") or None
+        for p in paths:  # first: a wrong password must not cost a copy of the open document each time
+            try:
+                pt.check_source(p, password)
+            except ValueError as exc:
+                return self._owner_password(p, exc)
         at = int(a.get("at", len(self.s.doc)))
         with self.s.edit("insert", right="assemble") as ed:
             revs = list(self.s.revs)
             at = max(0, min(at, len(revs)))
-            if os.path.splitext(paths[0])[1].lower() == ".pdf":
-                n = pt.insert_pdf_file(self.s.doc, paths[0], at, a.get("password") or None)
-            else:
-                n = pt.insert_images(self.s.doc, paths, at)
+            n = 0
+            for p in paths:  # a PDF by what it holds, not by its name; an image becomes a page
+                n += pt.insert_pdf_file(self.s.doc, p, at + n, password)
             ed.revs = revs[:at] + [None] * n + revs[at:]
         return self._doc(at=at, count=n)
 
@@ -966,11 +979,17 @@ class Api:
         paths = [p for p in a.get("paths", []) if os.path.isfile(p)]
         if len(paths) < 2:
             raise SessionError("NEED_TWO")
+        passwords = a.get("passwords") or {}
+        for p in paths:  # every owner password first, then where the result goes
+            try:
+                pt.check_source(p, passwords.get(p))
+            except ValueError as exc:
+                return self._owner_password(p, exc)
         out = self._new_file(self._dialogs.save(self._suffix("merged") + ".pdf", PDF_TYPES, os.path.dirname(paths[0])))
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         with self.s.lock:
-            n = pt.merge(paths, out, a.get("passwords") or {})
+            n = pt.merge(paths, out, passwords)
         return {"ok": True, "path": out, "pages": n}
 
     @rpc

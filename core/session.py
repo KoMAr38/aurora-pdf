@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import itertools
+import logging
 import os
 import secrets
 import shutil
@@ -149,6 +150,10 @@ class Session:
         with self.lock:
             self._check_job()  # opening now would drop the result of the running OCR
             doc, info = pt.load_for_editing(path, password)
+            try:
+                an.settle_fields(doc)
+            except Exception:  # a broken field must not keep the file from opening
+                logging.getLogger("aurora").exception("could not draw the form fields of %s", path)
             name = os.path.basename(path)
             if info.get("converted"):
                 name = os.path.splitext(name)[0] + ".pdf"
