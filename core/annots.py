@@ -38,6 +38,14 @@ _TOP_DOWN = re.compile(
     rb"(?P<color>.*?)BT\s+(?P<font>/\S+ (?P<size>[\d.]+) Tf)\s+"
     rb"(?P<a>[\d.]+) 0 0 -(?P<d>[\d.]+) (?P<x>[-\d.]+) [-\d.]+ Tm\s+"
     rb"(?P<glyphs>\[[^\]]*\])\s*TJ\s+ET\s+Q\s+Q\s+EMC\s*$", re.S)
+# how MuPDF writes a list box: every option from /TI on, one line each, clipped to the box; in the text's
+# own font from the top down (Td), or in its other font (Č, Ć, Đ) in a top-down space of its own (cm, Tm)
+_LIST = re.compile(
+    rb"(?P<clip>[-\d.]+ [-\d.]+ [\d.]+ [\d.]+) (?P<cut>re\s+W\s+n\s+)(?:"
+    rb"BT\s+(?:[\d. ]+(?:rg|g|k)\s+)?[-\d.]+ (?P<top>[-\d.]+) Td\s+0 -(?P<lh>[\d.]+) Td\s+/\S+ (?P<fs>[\d.]+) Tf"
+    rb"|1 0 0 -1 -?0 (?P<h>[\d.]+) cm\s+q\s+[-\d. ]+re\s+W\s+n\s+"
+    rb"(?:[\d. ]+(?:rg|g|k)\s+)?BT\s+/\S+ (?P<fs2>[\d.]+) Tf\s+"
+    rb"[\d.]+ 0 0 -[\d.]+ [-\d.]+ (?P<first>[\d.]+) Tm\s+\[[^\]]*\]\s*TJ(?:\s+0 -(?P<lh2>[\d.]+) Td)?)")
 
 
 # --- text layer -----------------------------------------------------------------
@@ -171,11 +179,8 @@ def page_fields(page: pymupdf.Page) -> list[dict]:
             "ro": bool(flags & FF_READONLY),
             "fs": w.text_fontsize or 0,
         }
-        if kind in ("check", "radio"):
-            d["on"] = w.on_state()
-            d["v"] = w.field_value not in (None, False, "Off", "")
-            if kind == "radio":
-                d["v"] = str(w.field_value) == str(w.on_state())
+        if kind in ("check", "radio"):  # as its drawing shows it: two widgets of a field can differ
+            d["v"] = page.parent.xref_get_key(w.xref, "AS")[1] not in ("null", "/Off")
         elif kind in ("combo", "list"):
             # [value, label]: a choice may store "NO" and show "Norway"; the file keeps the value
             d["opts"] = [[o, o] if isinstance(o, str) else [o[0], o[-1]] for o in (w.choice_values or [])]
@@ -506,24 +511,36 @@ def _widget(page, xref: int):
         raise ValueError("field not found") from None
 
 
+def _head(ref) -> int:
+    """The number of the object that holds the value of the widget ``ref`` (a reference to it): the widget itself,
+    or the parent that names the field. A loop of /Parent, or a parent that is not a dictionary, ends the walk."""
+    m = pymupdf.mupdf
+    for _ in range(32):
+        if m.pdf_dict_gets(ref, "T").m_internal:
+            break
+        parent = m.pdf_dict_gets(ref, "Parent")
+        if not (m.pdf_is_indirect(parent) and m.pdf_is_dict(parent)):
+            break
+        ref = parent
+    return m.pdf_to_num(ref)
+
+
 def _field_object(doc, xref: int) -> int:
     """The object that holds a widget's value: the widget itself, or the parent that names the field."""
-    while doc.xref_get_key(xref, "T")[0] == "null":
-        kind, parent = doc.xref_get_key(xref, "Parent")
-        if kind != "xref":
-            break
-        xref = int(parent.split()[0])
-    return xref
+    return _head(pymupdf.mupdf.pdf_new_indirect(pymupdf._as_pdf_document(doc), xref, 0))
 
 
 def _fields_of(doc) -> dict[int, list[tuple[int, int]]]:
     """The widgets of every field, {field: [(page number, widget xref)]}, from the pages' own lists: a field's
-    /Kids can miss a widget (a copied page's), and a widget's /P can be missing or name another page."""
+    /Kids can miss a widget (a copied page's), and a widget's /P can be missing or name another page.
+    shortcut: reads every page's list on each change of a field with several widgets, without loading the
+    pages (0.1 s for 15 000 widgets); keep the map between edits if forms that big turn up."""
+    pdf = pymupdf._as_pdf_document(doc)
     out = {}
     for pno in range(len(doc)):
-        for x, kind, _ in doc[pno].annot_xrefs():
-            if kind == pymupdf.PDF_ANNOT_WIDGET:
-                out.setdefault(_field_object(doc, x), []).append((pno, x))
+        for x, kind, _ in doc.page_annot_xrefs(pno):
+            if x and kind == pymupdf.PDF_ANNOT_WIDGET:
+                out.setdefault(_head(pymupdf.mupdf.pdf_new_indirect(pdf, x, 0)), []).append((pno, x))
     return out
 
 
@@ -574,6 +591,31 @@ def _upright(doc, xref: int) -> None:
                           % (m["head"], m["color"], m["font"], m["a"], m["d"], m["x"], y, m["glyphs"]))
 
 
+def _mark(doc, xref: int, places: list[int]) -> None:
+    """MuPDF draws a list box's options alike: put the selection colour other readers use behind the chosen
+    ones (``places`` in the option list), so print, export and other readers show what is chosen. A scrolled
+    list starts at option /TI, which MuPDF reads from the widget only and rounds."""
+    kind, ti = doc.xref_get_key(xref, "TI")
+    first = max(int(float(ti) + 0.5), 0) if kind in ("int", "float") else 0
+    rows = [i - first for i in places if i >= first]
+    kind, ap = doc.xref_get_key(xref, "AP/N")
+    m = _LIST.search(doc.xref_stream(int(ap.split()[0]))) if kind == "xref" and rows else None
+    if not m:
+        return
+    x, _, width, _ = map(float, m["clip"].split())
+    if m["top"]:
+        fs, lh = float(m["fs"]), float(m["lh"])
+        lines = [float(m["top"]) - (i + 1) * lh for i in rows]
+    else:
+        fs = float(m["fs2"])
+        lh = float(m["lh2"]) if m["lh2"] else 1.2 * fs
+        lines = [float(m["h"]) - float(m["first"]) - i * lh for i in rows]
+    stream = m.string
+    rects = b"".join(b"%g %g %g %g re\n" % (x, y - (lh - fs) / 2 - 0.2 * fs, width, lh) for y in lines)
+    doc.update_stream(int(ap.split()[0]), stream[: m.end("cut")] + b"q\n0.6 0.757 0.855 rg\n" + rects + b"f\nQ\n"
+                      + stream[m.end("cut"):])
+
+
 _DRAWN = ("V", "AP", "AS", "I")  # what giving a widget a value changes in it
 
 
@@ -601,31 +643,34 @@ def _update(doc, xref: int, w) -> None:
             m.pdf_dict_put(obj, key, m.pdf_dict_get_val(before, i))
 
 
-def _draw(page, xref: int, w, kind: str, text: str) -> None:
-    """Give the widget ``text`` and draw it.
+def _draw(page, xref: int, w, kind: str, text: str | None) -> None:
+    """Give the widget ``text`` and draw it; None draws it with the value it holds (a list's choices).
 
     update() skips an empty value and reset() brings back the default (/DV), so an empty text goes into
     /V itself and the widget is read again. Text outside Windows-1252 (Č, Ć, Đ, Cyrillic) MuPDF draws
     in another font, at size 0 in a field that sizes its text itself and below the box in a one-line
     field: it gets the size MuPDF would have picked for the drawing only, so the field goes on sizing
-    itself, and the line is moved up into the box. A widget without a box is hidden: it only gets the value.
+    itself, and the line is moved up into the box. A list box shows all its options, so they decide.
+    A widget without a box is hidden: it only gets the value.
     """
     doc = page.parent
     if w.rect.is_empty:  # update() refuses it, and there is nothing to see
-        doc.xref_set_key(_field_object(doc, xref), "V", pymupdf.get_pdf_str(text))
+        if text is not None:
+            doc.xref_set_key(_field_object(doc, xref), "V", pymupdf.get_pdf_str(text))
         return
     if text:
         w.field_value = text
-    else:
+    elif text is not None:
         doc.xref_set_key(_field_object(doc, xref), "V", "()")
         w = _widget(page, xref)
+    shown = "".join(o if isinstance(o, str) else o[-1] for o in w.choice_values or []) if kind == "list" else text
     try:
-        text.encode("cp1252")
+        shown.encode("cp1252")
         other = False
     except UnicodeEncodeError:
         other = True
     if other and not w.text_fontsize:
-        w.text_fontsize = _auto_size(doc, w, kind, text)  # _update puts the field's own /DA back
+        w.text_fontsize = _auto_size(doc, w, kind, shown)  # _update puts the field's own /DA back
     _update(doc, xref, w)
     if other and kind != "list" and not w.field_flags & FF_MULTILINE:
         _upright(doc, xref)
@@ -646,7 +691,33 @@ def _chosen(doc, xref: int) -> list[str]:
     v = m.pdf_dict_get_inheritable(obj, m.PdfObj(m.PDF_ENUM_NAME_V))
     if m.pdf_is_array(v):
         return [m.pdf_to_text_string(m.pdf_array_get(v, i)) for i in range(m.pdf_array_len(v))]
-    return [m.pdf_to_text_string(v)] if m.pdf_is_string(v) else []
+    text = m.pdf_field_value(obj)  # a text string, also a name or a text stream
+    return [text] if text else []
+
+
+def _turn(page, xref: int, state: str, fields: dict | None = None) -> None:
+    """Set the check box or radio group of widget ``xref`` to ``state`` (a state name, or "Off") the way a
+    viewer does: the name in the field's /V, and in every widget's /AS that state where the widget has a
+    drawing for it, else Off. A widget without drawings MuPDF draws itself, every one of them with the state
+    Yes: a check box shows the state everywhere, a radio group in widget ``xref`` only. update() changed the
+    clicked widget only, wrote /V as text and replaced the form's own drawings.
+    shortcut: works through MuPDF's objects, check again when requirements.txt moves past PyMuPDF 1.28."""
+    doc, m = page.parent, pymupdf.mupdf
+    pdf = pymupdf._as_pdf_document(doc)
+    field = _field_object(doc, xref)
+    head = m.pdf_load_object(pdf, field)
+    m.pdf_dict_puts(head, "V", m.pdf_new_name(state))
+    radio = m.pdf_field_type(head) == m.PDF_WIDGET_TYPE_RADIOBUTTON
+    for _, x in _widgets_of(page, xref, fields):
+        obj = m.pdf_load_object(pdf, x)
+        drawings = m.pdf_dict_getp(obj, "AP/N")
+        if m.pdf_is_dict(drawings):
+            drawn = m.pdf_dict_gets(drawings, state).m_internal
+        else:
+            drawn = x == xref or not radio
+        m.pdf_dict_puts(obj, "AS", m.pdf_new_name(state if drawn else "Off"))
+        if x != field:
+            m.pdf_dict_dels(obj, "V")  # a widget's own /V (update() wrote one) would hide the field's
 
 
 def set_field(page, xref: int, value) -> None:
@@ -669,9 +740,10 @@ def _need_appearances(doc) -> tuple[int, str]:
 
 def settle_fields(doc: pymupdf.Document) -> None:
     """A form with NeedAppearances asks every reader to draw its fields itself. MuPDF then draws them for the
-    screen only, loses Č, Ć and Đ doing it, and flattening keeps the old drawings: draw the text fields and
-    dropdowns once, as set_field does, and switch it off, so the page, its print, its exports and a
-    flattened copy all show what the fields hold. If a field cannot be drawn, it stays on."""
+    screen only, loses Č, Ć and Đ doing it, and flattening keeps the old drawings: draw the text fields,
+    dropdowns and lists once, with the value of the field, as set_field does, and switch it off, so the page,
+    its print, its exports and a flattened copy all show what the fields hold. If a field cannot be drawn, it
+    stays on."""
     host, key = _need_appearances(doc)
     if doc.xref_get_key(host, key)[1] != "true":
         return
@@ -682,11 +754,13 @@ def settle_fields(doc: pymupdf.Document) -> None:
         for page in doc:
             for w in _widgets(page):
                 kind, field = _widget_kind(w), _field_object(doc, w.xref)
-                if kind not in ("text", "combo") or field in done:
+                if kind not in ("text", "combo", "list") or field in done:
                     continue
                 done.add(field)  # _fill draws every widget of the field
                 try:
-                    _fill(page, w.xref, w, kind, w.field_value or "", fields)
+                    value = _chosen(doc, field)
+                    _fill(page, w.xref, w, kind,
+                          value if w.field_flags & FF_MULTISELECT else (value or [""])[0], fields)
                 except Exception:
                     failed = True
         drawn = not failed
@@ -697,43 +771,72 @@ def settle_fields(doc: pymupdf.Document) -> None:
 
 def _fill(page, xref: int, w, kind: str, value, fields: dict | None = None) -> None:
     doc = page.parent
-    if kind == "check":
-        w.field_value = w.on_state() if value else "Off"
-    elif kind == "radio":
-        if not value:
-            return
-        w.field_value = w.on_state()
-    elif kind in ("combo", "list"):
-        field = _field_object(doc, xref)
-        if isinstance(value, list):  # several choices: PyMuPDF takes one, so /V gets them all and /I their places
-            values = [str(v) for v in value]
-            places = [i for i, o in enumerate(w.choice_values or []) if (o if isinstance(o, str) else o[0]) in values]
-            for key, items in (("V", "".join(map(pymupdf.get_pdf_str, values))), ("I", " ".join(map(str, places)))):
-                if items:
-                    doc.xref_set_key(field, key, f"[{items}]")
-                else:
-                    _drop(doc, field, key)
-            return  # MuPDF draws a list without marking the choices, so there is nothing to redraw
-        value = str(value)
-        labels = {o[0]: o[-1] for o in w.choice_values or [] if not isinstance(o, str)}
-        for p, x in _widgets_of(page, xref, fields):  # MuPDF draws the text it gets: the label ("Norway")
-            _draw(p, x, w if x == xref else _widget(p, x), kind, labels.get(value, value))
-        doc.xref_set_key(field, "V", pymupdf.get_pdf_str(value))  # and the file keeps the value ("NO"),
-        _drop(doc, field, "I")  # which is what the form hands on; and the places of an old choice go
+    if kind in ("check", "radio"):
+        if value or kind == "check":  # a radio button goes off when another one comes on
+            m = pymupdf.mupdf
+            on = m.pdf_button_field_on_state(m.pdf_load_object(pymupdf._as_pdf_document(doc), xref))
+            _turn(page, xref, m.pdf_to_name(on) if value else "Off", fields)
         return
-    elif kind == "text":
-        text, field = str(value), _field_object(doc, xref)
+    if kind not in ("combo", "list", "text"):
+        raise ValueError(f"cannot fill a {kind} field")
+    field, widgets = _field_object(doc, xref), _widgets_of(page, xref, fields)
+    for _, x in widgets:  # the value belongs to the field: MuPDF reads and draws a widget's own instead,
+        if x != field:  # and it would stay in the file
+            _drop(doc, x, "V")
+    if kind == "text":
+        text = str(value)
         if text != (w.field_value or ""):
             _drop(doc, field, "RV")  # its rich text would go on showing the old value
         shown = "•" * len(text) if w.field_flags & FF_PASSWORD else text  # a password is never drawn readable
-        for p, x in _widgets_of(page, xref, fields):
+        for p, x in widgets:
             _draw(p, x, w if x == xref else _widget(p, x), kind, shown)
         if shown != text:
             doc.xref_set_key(field, "V", pymupdf.get_pdf_str(text))
-        return
+    elif isinstance(value, list):  # several choices: PyMuPDF takes one, so /V gets them all and /I their places
+        values = [str(v) for v in value]
+        places = [i for i, o in enumerate(w.choice_values or []) if (o if isinstance(o, str) else o[0]) in values]
+        for key, items in (("V", "".join(map(pymupdf.get_pdf_str, values))), ("I", " ".join(map(str, places)))):
+            if items:
+                doc.xref_set_key(field, key, f"[{items}]")
+            else:
+                _drop(doc, field, key)
+        for p, x in widgets:  # read again, the array as "", which update() keeps
+            _draw(p, x, _widget(p, x), kind, None)
+            _mark(doc, x, places)
     else:
-        raise ValueError(f"cannot fill a {kind} field")
-    _update(doc, xref, w)
+        value = str(value)
+        labels = {o[0]: o[-1] for o in w.choice_values or [] if not isinstance(o, str)}
+        places = [i for i, o in enumerate(w.choice_values or []) if (o if isinstance(o, str) else o[0]) == value]
+        for p, x in widgets:  # MuPDF draws the text it gets: the label ("Norway")
+            _draw(p, x, w if x == xref else _widget(p, x), kind, labels.get(value, value))
+            if kind == "list":
+                _mark(doc, x, places)
+        doc.xref_set_key(field, "V", pymupdf.get_pdf_str(value))  # and the file keeps the value ("NO"),
+        _drop(doc, field, "I")  # which is what the form hands on; and the places of an old choice go
+
+
+def forget_passwords(doc: pymupdf.Document) -> None:
+    """Empty every password field: readers should never store its value in the file (ISO 32000-1, 12.7.4.3).
+    For the copy that gets written, so the open document keeps what was typed. Looks through the pages'
+    objects: loading every widget costs seconds in a big form, more when it asks readers to draw it.
+    shortcut: works through MuPDF's objects, check again when requirements.txt moves past PyMuPDF 1.28."""
+    m = pymupdf.mupdf
+    pdf = pymupdf._as_pdf_document(doc)
+    for pno in range(len(doc)):
+        annots = m.pdf_dict_gets(m.pdf_lookup_page_obj(pdf, pno), "Annots")
+        for i in range(m.pdf_array_len(annots)):
+            obj = m.pdf_array_get(annots, i)
+            try:
+                secret = (m.pdf_field_type(obj) == m.PDF_WIDGET_TYPE_TEXT and m.pdf_field_flags(obj) & FF_PASSWORD
+                          and m.pdf_field_value(obj))
+            except Exception:  # a field MuPDF cannot read (a loop of /Parent) does not stop the save
+                continue
+            if secret:  # its other widgets are emptied with it
+                page, xref = doc[pno], m.pdf_to_num(obj)
+                try:
+                    _fill(page, xref, _widget(page, xref), "text", "")
+                except Exception:  # the save goes on, and the value goes at least
+                    _drop(doc, _field_object(doc, xref), "V")
 
 
 def has_fields(doc: pymupdf.Document) -> bool:
@@ -744,7 +847,8 @@ def reset_fields(doc: pymupdf.Document) -> int:
     """Every field back to its default (/DV). A field is reset as a whole (Widget.reset() on one widget of
     several resets only that widget), and only then drawn: MuPDF's reset draws a dropdown's value ("NO"),
     loses Č, Ć, Đ and leaves a list's /I (its chosen places) as it was, so each field gets its default again
-    as set_field gives it."""
+    as set_field gives it. A check box or radio group gets its default as a click gives it: MuPDF's reset
+    turns only the widgets that /Kids lists and has them drawn its own way at the next render."""
     m = pymupdf.mupdf
     pdf = pymupdf._as_pdf_document(doc)
     n, reset = 0, {}
@@ -756,12 +860,16 @@ def reset_fields(doc: pymupdf.Document) -> int:
             n += 1
             field = _field_object(doc, w.xref)
             if field not in reset:
-                m.pdf_field_reset(pdf, m.pdf_load_object(pdf, field))
+                if kind not in ("check", "radio"):
+                    m.pdf_field_reset(pdf, m.pdf_load_object(pdf, field))
                 reset[field] = (page, w, kind)  # the page object too: the widget needs it to be drawn
     fields = _fields_of(doc)
-    for page, w, kind in reset.values():
-        if kind in ("combo", "list", "text"):
-            value = _chosen(doc, w.xref)
+    for field, (page, w, kind) in reset.items():
+        if kind in ("check", "radio"):
+            dv = m.pdf_dict_get_inheritable(m.pdf_load_object(pdf, field), m.PdfObj(m.PDF_ENUM_NAME_DV))
+            _turn(page, w.xref, m.pdf_to_name(dv) or m.pdf_to_text_string(dv) or "Off", fields)
+        elif kind in ("combo", "list", "text"):
+            value = _chosen(doc, field)  # the field's: a widget /Kids does not list keeps a value of its own
             _fill(page, w.xref, w, kind, value if w.field_flags & FF_MULTISELECT else (value or [""])[0], fields)
     return n
 

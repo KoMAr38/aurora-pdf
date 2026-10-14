@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 166 automatiske tester. 52 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 172 automatiske tester. 52 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -49,7 +49,7 @@ tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e
 
 Motoren er PyMuPDF, som bygger på MuPDF. pyHanko lager og kontrollerer sertifikatsignaturene, cryptography lager nøklene til de digitale ID-ene, pdf2docx står for Word-eksporten, og Pillow koder sidebildene. Grensesnittet er vanlig HTML, CSS og JavaScript i et WebView2-vindu fra pywebview. Det har ikke noe byggesteg: filene i `web/` er de som kjører.
 
-Koden er rundt 4 700 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS. Testene er 3 600 linjer.
+Koden er rundt 4 800 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS. Testene er 3 800 linjer.
 
 ### Valg som er verdt å se på
 
@@ -81,7 +81,7 @@ Koden er rundt 4 700 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS.
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 57 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker og eksport |
+| `tests/test_engine.py` | 63 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker og eksport |
 | `tests/test_api.py` | 44 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 9 | OCR med språkdataene som følger med, digitale ID-er, signering og endringer etter signering |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
@@ -160,6 +160,8 @@ Resten står i `START_HER.md`.
 
 **Feltene ble skrevet om når de ble tegnet.** Gjennomgangene av rettelsen fant at PyMuPDF skriver hele feltet på nytt når teksten tegnes. Skjemaets egen skrift ble byttet ut med Helvetica, handlinger knyttet til feltet forsvant, og et passordfelt ble tegnet med lesbar tekst. Nå endres bare verdien og tegningen, og et passord tegnes som prikker. Testen `test_a_form_that_asks_readers_to_draw_its_fields` bygger et skjema med alle disse tilfellene.
 
+**Tre feil til i skjemaene.** En avkrysningsboks som står på to steder, ble bare krysset av på det ene, og når den ble slått av gjennom det andre, sto verdien fortsatt som avkrysset. PyMuPDF skrev også verdien som tekst og byttet ut skjemaets egne tegninger. Nå skifter alle stedene sammen, og tegningene beholdes. Verdien i et passordfelt lagres ikke lenger i filen, slik PDF-standarden sier, men står i feltet så lenge filen er åpen. Listebokser merker valgene med samme farge som andre PDF-lesere bruker, slik at også utskrift og eksport viser dem. Testen for det fant at en listeboks med Č i alternativene ble tegnet med skriftstørrelse 0 når valget selv var uten Č. En ny gjennomgang av rettelsene fant fem feil til. I en listeboks som var rullet ned, ble feil linje merket, fordi listen tegnes fra det øverste synlige valget. «Tøm feltene» byttet fortsatt ut skjemaets egne tegninger av knappene, og i en gruppe radioknapper uten tegninger ble alle knappene slått på. Feltlaget viste en knapp som avkrysset ut fra feltets verdi, ikke ut fra knappens egen tilstand. Og et passord ble liggende i filen når feltet sto flere steder og ett av stedene hadde sin egen kopi av verdien. Alle fem har tester. Gjennomgangen etter det fant to til. Et skjemafelt med en løkke i /Parent-kjeden stoppet lagringen av hele filen, og listebokser i et skjema som ber leseren tegne feltene, viste ikke valgene før de ble endret. Begge har tester.
+
 ---
 
 ## Forbehold
@@ -175,8 +177,6 @@ Resten står i `START_HER.md`.
 **OCR bruker de raske språkmodellene til Tesseract** (tessdata_fast). Håndskrift blir ikke gjenkjent.
 
 **Word-eksporten er en tilnærming.** Spalter og kompliserte tabeller blir sjelden helt like originalen.
-
-**Listebokser viser ikke valgene i selve filen.** Valgene lagres og vises i programmet, men MuPDF tegner listen uten å merke dem. Utskrift og eksport viser derfor alle alternativene likt.
 
 **Ytelsestallene er fra en container uten skjermkort**, ikke fra en vanlig PC.
 

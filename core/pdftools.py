@@ -161,7 +161,11 @@ def rights_for(info: dict) -> dict:
 
 
 def _working_copy(doc: pymupdf.Document, subset_fonts: bool = False) -> pymupdf.Document:
+    """The copy every saved file is written from."""
+    from . import annots  # imports this module
+
     tmp = pymupdf.open("pdf", doc.tobytes())
+    annots.forget_passwords(tmp)
     if subset_fonts:
         try:
             tmp.subset_fonts()
@@ -535,6 +539,8 @@ def uncrop_pages(doc: pymupdf.Document, pages: Sequence[int]) -> None:
 
 def merge(paths: Sequence[str], out_path: str, passwords: dict[str, str] | None = None) -> int:
     """Combine whole files into a new, unprotected PDF (see :func:`load_source` for protected ones)."""
+    from . import annots  # imports this module
+
     passwords = passwords or {}
     out = pymupdf.open()
     try:
@@ -542,6 +548,7 @@ def merge(paths: Sequence[str], out_path: str, passwords: dict[str, str] | None 
             src = load_source(p, passwords.get(p))
             out.insert_pdf(src)
             src.close()
+        annots.forget_passwords(out)  # as in every file this program writes
         out.save(out_path, garbage=3, deflate=True)
         return len(out)
     finally:

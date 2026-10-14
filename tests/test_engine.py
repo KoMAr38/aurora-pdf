@@ -403,6 +403,37 @@ def _field(page, kind, name, rect, **props):
     return next(w for w in page.widgets() if w.field_name == name).xref
 
 
+def test_a_password_stays_out_of_the_saved_file(tmp_path):
+    """ISO 32000-1, 12.7.4.3: readers should never store the value of a password field in the file. The
+    open document keeps it, so the field still holds it on screen."""
+    doc = make_doc(1)
+    page = doc[0]
+    pin = _field(page, pymupdf.PDF_WIDGET_TYPE_TEXT, "pin", (50, 400, 250, 425), field_flags=an.FF_PASSWORD)
+    name = _field(page, pymupdf.PDF_WIDGET_TYPE_TEXT, "ime", (50, 300, 250, 325))
+    an.set_field(page, pin, "tajna")
+    an.set_field(page, name, "Marko")
+    out = tmp_path / "out.pdf"
+    pt.save_pdf(doc, str(out))
+    assert b"tajna" not in out.read_bytes() and b"tajna" not in pt.clean_bytes(doc)  # also what gets signed
+    saved = pymupdf.open(out)
+    assert {f["n"]: f["v"] for f in an.page_fields(saved[0])} == {"pin": "", "ime": "Marko"}
+    assert "•" not in saved[0].get_text() and {f["n"]: f["v"] for f in an.page_fields(page)}["pin"] == "tajna"
+    field, kids = doc.get_new_xref(), (doc.get_new_xref(), doc.get_new_xref())
+    doc.update_object(field, f"<</FT/Tx/T(pin2)/Ff 8192/DA(/Helv 0 Tf 0 g)/V(tajna1)/Kids[{kids[0]} 0 R {kids[1]} 0 R]>>")
+    for k, y in zip(kids, (500, 540)):  # the second with a value of its own, as some programs write them
+        doc.update_object(k, f"<</Type/Annot/Subtype/Widget/Rect[50 {y} 250 {y + 25}]/Parent {field} 0 R/F 4"
+                             + ("/V(tajna2)>>" if k == kids[1] else ">>"))
+    doc.xref_set_key(page.xref, "Annots", doc.xref_get_key(page.xref, "Annots")[1][:-1] + f" {kids[0]} 0 R {kids[1]} 0 R]")
+    doc = pymupdf.open("pdf", doc.tobytes())  # the page's widget list is read when it is loaded
+    page = doc[0]
+    assert b"tajna" not in pt.clean_bytes(doc)
+    doc.save(tmp_path / "raw.pdf")  # as a program that stores it would
+    pt.merge([str(tmp_path / "raw.pdf")], str(tmp_path / "merged.pdf"))
+    assert b"tajna" not in (tmp_path / "merged.pdf").read_bytes()
+    an.set_field(page, kids[0], "nova")  # the field gets the value, and no widget keeps an old one of its own
+    assert doc.xref_get_key(field, "V") == ("string", "nova") and doc.xref_get_key(kids[1], "V")[0] == "null"
+
+
 def test_emptying_a_field_does_not_bring_back_its_default():
     doc = make_doc(1)
     page = doc[0]
@@ -576,12 +607,180 @@ def test_a_copied_page_shows_what_its_fields_hold():
         assert _fits(_shown(doc, reka, pno), reka, "Đerdap"), pno
 
 
+def _drawing(doc, on):
+    """A button drawing of the form's own: a blue square for on, nothing for off."""
+    x = doc.get_new_xref()
+    doc.update_object(x, "<</Type/XObject/Subtype/Form/BBox[0 0 14 14]>>")
+    doc.update_stream(x, b"0 0 1 rg 2 2 10 10 re f" if on else b"")
+    return x
+
+
+def _buttons():
+    """A check box shown on two pages and a radio group of three, every widget with the form's own drawings."""
+    doc = make_doc(2)
+    fields = {}
+    for name, flags, kids in (("da", 0, (("Yes", 0, 700), ("Yes", 1, 700))),
+                              ("izbor", 49152, (("A", 0, 650), ("B", 0, 600), ("C", 1, 650)))):
+        field, xs = doc.get_new_xref(), []
+        for state, pno, y in kids:
+            x = doc.get_new_xref()
+            doc.update_object(x, f"<</Type/Annot/Subtype/Widget/Rect[50 {y} 64 {y + 14}]/Parent {field} 0 R/F 4"
+                                 f"/AP<</N<</{state} {_drawing(doc, True)} 0 R/Off {_drawing(doc, False)} 0 R>>>>/AS/Off>>")
+            kind, annots = doc.xref_get_key(doc.page_xref(pno), "Annots")
+            doc.xref_set_key(doc.page_xref(pno), "Annots", (annots[:-1] if kind == "array" else "[") + f" {x} 0 R]")
+            xs.append(x)
+        doc.update_object(field, f"<</FT/Btn/Ff {flags}/T({name})/V/Off/Kids[{' '.join(f'{x} 0 R' for x in xs)}]>>")
+        fields[name] = (field, xs)
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm", "<</Fields[" + " ".join(f"{f} 0 R" for f, _ in fields.values()) + "]>>")
+    return pymupdf.open("pdf", doc.tobytes()), fields
+
+
+def test_check_boxes_and_radio_buttons_change_in_every_place():
+    """A check box or radio group shown in several places changes everywhere at once. PyMuPDF changed only the
+    clicked widget, left a check box on when it was turned off through its other widget, wrote /V as text
+    and swapped the form's own drawings for its own."""
+    doc, b = _buttons()
+    drawings = {x: doc.xref_get_key(x, "AP/N") for _, xs in b.values() for x in xs}
+
+    def shown(name):
+        return [doc.xref_get_key(x, "AS")[1] for x in b[name][1]]
+
+    an.set_field(doc[1], b["da"][1][1], True)  # through the widget on page 2
+    assert doc.xref_get_key(b["da"][0], "V") == ("name", "/Yes") and shown("da") == ["/Yes", "/Yes"]
+    an.set_field(doc[0], b["da"][1][0], False)
+    assert doc.xref_get_key(b["da"][0], "V") == ("name", "/Off") and shown("da") == ["/Off", "/Off"]
+    an.set_field(doc[1], b["izbor"][1][2], True)
+    assert doc.xref_get_key(b["izbor"][0], "V") == ("name", "/C") and shown("izbor") == ["/Off", "/Off", "/C"]
+    an.set_field(doc[0], b["izbor"][1][1], True)
+    assert shown("izbor") == ["/Off", "/B", "/Off"]
+    assert [f["v"] for p in doc for f in an.page_fields(p)] == [False, False, True, False, False]
+    assert {x: doc.xref_get_key(x, "AP/N") for x in drawings} == drawings  # the form's own on and off
+    assert all(doc.xref_get_key(x, "V")[0] == "null" for x in drawings)  # the value stays on the field
+    pt.duplicate_pages(doc, [0])  # a copied page's widgets name their field as parent, /Kids does not list them
+    copy = [x for x, *_ in doc[1].annot_xrefs()]
+    an.set_field(doc[0], b["da"][1][0], True)
+    assert [doc.xref_get_key(x, "AS")[1] for x in copy] == ["/Yes", "/Off", "/B"]
+    doc.xref_set_key(b["izbor"][0], "DV", "/C")
+    assert an.reset_fields(doc) == 8
+    assert shown("da") == ["/Off", "/Off"] and shown("izbor") == ["/Off", "/Off", "/C"]
+    assert [doc.xref_get_key(x, "AS")[1] for x in copy] == ["/Off", "/Off", "/Off"]
+    for p in doc:
+        p.get_pixmap(dpi=20)  # MuPDF's own reset had the buttons drawn its own way at the next render
+    assert {x: doc.xref_get_key(x, "AP/N") for x in drawings} == drawings
+
+
+def test_the_field_layer_shows_each_button_as_its_widget_shows_it():
+    """On or off comes from each widget's own /AS. A check box whose widgets have different states showed both
+    on, a state name with # in it never showed on, and a button without drawings stopped the page's whole
+    field layer. A radio button without drawings turns on alone."""
+    doc = make_doc(1)
+    pol, bez, xs = doc.get_new_xref(), doc.get_new_xref(), []
+    for i, state in enumerate(("M", "Ja#2FNei")):  # the second is "Ja/Nei"
+        x = doc.get_new_xref()
+        doc.update_object(x, f"<</Type/Annot/Subtype/Widget/Rect[{50 + 40 * i} 700 {64 + 40 * i} 714]/Parent {pol} 0 R"
+                             f"/F 4/AP<</N<</{state} {_drawing(doc, True)} 0 R/Off {_drawing(doc, False)} 0 R>>>>/AS/Off>>")
+        xs.append(x)
+    for i in range(2):
+        x = doc.get_new_xref()
+        doc.update_object(x, f"<</Type/Annot/Subtype/Widget/Rect[{50 + 40 * i} 600 {64 + 40 * i} 614]/Parent {bez} 0 R/F 4>>")
+        xs.append(x)
+    doc.update_object(pol, f"<</FT/Btn/T(pol)/V/Off/Kids[{xs[0]} 0 R {xs[1]} 0 R]>>")
+    doc.update_object(bez, f"<</FT/Btn/Ff 49152/T(bez)/Kids[{xs[2]} 0 R {xs[3]} 0 R]>>")
+    doc.xref_set_key(doc.page_xref(0), "Annots", "[" + " ".join(f"{x} 0 R" for x in xs) + "]")
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm", f"<</Fields[{pol} 0 R {bez} 0 R]>>")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.set_field(doc[0], xs[1], True)
+    an.set_field(doc[0], xs[3], True)
+    assert [doc.xref_get_key(x, "AS")[1] for x in xs] == ["/Off", "/Ja/Nei", "/Off", "/Yes"]
+    assert [f["v"] for f in an.page_fields(doc[0])] == [False, True, False, True]
+
+
 def test_a_form_that_cannot_be_drawn_keeps_asking_readers(monkeypatch):
     doc, af, _ = _form_made_elsewhere()
     monkeypatch.setattr(an, "_widgets", lambda page: iter(()) if page.number == 0 else 1 / 0)  # page 2 unreadable
     with pytest.raises(ZeroDivisionError):
         an.settle_fields(doc)
     assert doc.xref_get_key(af, "NeedAppearances") == ("bool", "true")
+
+
+def _list_marks(doc, boxes):
+    """For each list box, which of its options print with the selection colour behind them."""
+    baked = pymupdf.open("pdf", doc.tobytes())
+    baked.bake()
+    page = baked[0]
+    marks = [item[1] for d in page.get_drawings() if d.get("fill") == pytest.approx((0.6, 0.757, 0.855), abs=0.01)
+             for item in d["items"] if item[0] == "re"]
+    words = [(w[4], (pymupdf.Rect(w[:4]).tl + pymupdf.Rect(w[:4]).br) / 2) for w in page.get_text("words")]
+    out = {}
+    for name, (box, labels) in boxes.items():
+        found = {t: any(r.contains(m) for r in marks) for t, m in words if pymupdf.Rect(box).contains(m)}
+        out[name] = [found.get(label.split()[0], "not printed") for label in labels]
+    return out
+
+
+def test_list_boxes_mark_what_is_chosen():
+    """MuPDF draws a list box without marking the chosen options, so print, export and other readers showed
+    them all alike. The chosen ones get the selection colour behind them, in both of MuPDF's layouts (one of
+    them for options with Č, Ć, Đ)."""
+    doc = make_doc(1)
+    page = doc[0]
+    LIST = pymupdf.PDF_WIDGET_TYPE_LISTBOX
+    cities, langs = ["Beograd", "Novi Sad", "Čačak", "Ниш"], ["Srpski", "Norsk", "English", "Deutsch"]
+    boxes = {"grad": ((50, 300, 250, 380), cities), "jezici": ((300, 300, 500, 380), langs)}
+    one = _field(page, LIST, "grad", boxes["grad"][0], field_value="NS",
+                 choice_values=[[c[:2].upper(), c] for c in cities])
+    more = _field(page, LIST, "jezici", boxes["jezici"][0], field_value="Sr", field_flags=an.FF_MULTISELECT,
+                  choice_values=[[c[:2], c] for c in langs])
+    an.set_field(page, one, "ČA")
+    an.set_field(page, more, ["Sr", "De"])
+    assert _list_marks(doc, boxes) == {"grad": [False, False, True, False], "jezici": [True, False, False, True]}
+    an.set_field(page, one, "BE")  # the options decide the font, not the choice: MuPDF drew them at size 0
+    assert _list_marks(doc, boxes)["grad"] == [True, False, False, False]
+    an.reset_fields(doc)  # no default: nothing chosen
+    assert _list_marks(doc, boxes) == {"grad": [False] * 4, "jezici": [False] * 4}
+    doc.xref_set_key(one, "TI", "1")  # scrolled: MuPDF draws the list from its second option
+    an.set_field(page, one, "ČA")
+    assert _list_marks(doc, boxes)["grad"] == ["not printed", False, True, False]
+
+
+def test_a_form_that_asks_readers_to_draw_its_lists():
+    """Opening a form with NeedAppearances switches it off, so a list box gets its marks then, not at the first
+    click. A value stored as a name stays."""
+    doc = make_doc(1)
+    cities, box = ["Beograd", "Novi Sad", "Subotica"], (50, 300, 250, 380)
+    xref = _field(doc[0], pymupdf.PDF_WIDGET_TYPE_LISTBOX, "grad", box, choice_values=cities, field_value="Beograd")
+    doc.xref_set_key(xref, "V", "(Subotica)")  # chosen in a program that left the drawing to the readers
+    land = _field(doc[0], pymupdf.PDF_WIDGET_TYPE_COMBOBOX, "land", (50, 400, 250, 425),
+                  choice_values=[["RS", "Serbia"], ["NO", "Norway"]], field_value="RS")
+    doc.xref_set_key(land, "V", "/NO")
+    doc.xref_set_key(*an._need_appearances(doc), "true")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    assert _list_marks(doc, {"grad": (box, cities)})["grad"] == [False, False, False]
+    an.settle_fields(doc)
+    assert _list_marks(doc, {"grad": (box, cities)})["grad"] == [False, False, True]
+    assert [f["v"] for f in an.page_fields(doc[0])] == ["Subotica", "NO"]
+    assert "Norway" in doc[0].get_text("text", clip=pymupdf.Rect(50, 400, 250, 425))
+
+
+def test_a_broken_field_does_not_stop_filling_or_saving():
+    """A check box whose /Parent is no dictionary is a field of its own. A field whose /Parent loops MuPDF cannot
+    read, and saving skips it."""
+    doc = make_doc(2)
+    box, num = doc.get_new_xref(), doc.get_new_xref()
+    doc.update_object(num, "42")
+    doc.update_object(box, f"<</Type/Annot/Subtype/Widget/FT/Btn/Rect[50 500 64 514]/F 4/Parent {num} 0 R>>")
+    doc.xref_set_key(doc.page_xref(0), "Annots", f"[{box} 0 R]")
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm", f"<</Fields[{box} 0 R]>>")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.set_field(doc[0], box, True)
+    assert doc.xref_get_key(box, "AS") == ("name", "/Yes") and an.reset_fields(doc) == 1
+    assert doc.xref_get_key(box, "AS") == ("name", "/Off")
+    text, a, b = (doc.get_new_xref() for _ in range(3))
+    doc.update_object(text, f"<</Type/Annot/Subtype/Widget/FT/Tx/V(x)/Rect[50 500 250 525]/F 4/Parent {a} 0 R>>")
+    doc.update_object(a, f"<</Parent {b} 0 R>>")
+    doc.update_object(b, f"<</Parent {a} 0 R>>")
+    doc.xref_set_key(doc.page_xref(1), "Annots", f"[{text} 0 R]")
+    assert b"/Widget" in pt.clean_bytes(doc)
 
 
 def test_list_with_several_choices():
