@@ -52,6 +52,19 @@ def test_ocr_adds_invisible_text_in_place(rot):
     assert not ocr.looks_scanned(doc)
 
 
+@pytest.mark.parametrize("rot", (90, 270))
+def test_ocr_text_lands_on_the_word_of_a_cropped_turned_scan(rot):
+    """A turned scan that was cropped: the text layer went in through ~page.transformation_matrix, which leaves
+    out the CropBox position of a turned page, and sat a crop's width away from the words in the picture."""
+    doc = scanned_doc(rot)
+    w, h = doc[0].rect.width, doc[0].rect.height  # on screen, before the crop
+    pt.crop_pages(doc, [0], (0.05, 0.05, 0.95, 0.95))
+    page = doc[0]
+    assert ocr.ocr_page(page, "srp_latn+eng", dpi=200) >= 10
+    first = next(w for w in an.text_layer(page) if w[5].startswith("Ugovor"))
+    assert first[4] == 0 and abs(first[0] - (120 * 72 / 150 - 0.05 * w)) < 6 and abs(first[1] - (200 * 72 / 150 - 0.05 * h)) < 8
+
+
 def test_ocr_reads_the_scan_not_the_comments_on_it():
     """A comment on a scan is no text of the page: the page still needs OCR, the comment's words stay out of the
     text layer, and the layer brings no second copy of the picture into the file."""
@@ -150,7 +163,10 @@ def test_a_protected_copy_of_a_signed_file_has_a_broken_signature(tmp_path):
     assert (res[0]["signer"], res[0]["reason"], res[0]["location"]) == ("Ana", "Odobreno", "Oslo")
 
 
-def _signed_form(tmp_path):
+_LOCK = {"user_pw": "open1", "owner_pw": "own1", "perms": -1, "algorithm": "aes256"}
+
+
+def _signed_form(tmp_path, protection=None):
     """An invoice form with an amount field, signed by the app: (path, signer)."""
     doc = make_doc(1)
     w = pymupdf.Widget()
@@ -160,16 +176,24 @@ def _signed_form(tmp_path):
     ident = signing.create_id("Ola Nordmann", "pw12345")
     signer = signing.load_signer(ident["id"], "pw12345")
     out = os.path.join(tmp_path, "invoice.pdf")
-    signing.sign_pdf(doc.tobytes(), out, signer)
+    signing.sign_pdf(doc.tobytes(), out, signer, protection=protection)
     return out, signer
 
 
-def _filled(data: bytes, value: str) -> bytes:
-    """The amount filled in as an incremental update, which a plain signature allows."""
-    from pyhanko.pdf_utils import generic
+def _writer(data: bytes, password=None):
     from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 
     wr = IncrementalPdfFileWriter(io.BytesIO(data))
+    if password:
+        wr.encrypt(password)
+    return wr
+
+
+def _filled(data: bytes, value: str, password=None) -> bytes:
+    """The amount filled in as an incremental update, which a plain signature allows."""
+    from pyhanko.pdf_utils import generic
+
+    wr = _writer(data, password)
     field = next(f for f in wr.root["/AcroForm"]["/Fields"] if f.get_object()["/T"] == "amount")
     field.get_object()["/V"] = generic.TextStringObject(value)
     wr.mark_update(field)
@@ -178,12 +202,11 @@ def _filled(data: bytes, value: str) -> bytes:
     return buf.getvalue()
 
 
-def _redrawn(data: bytes, text: str) -> bytes:
+def _redrawn(data: bytes, text: str, password=None) -> bytes:
     """The amount drawn anew, its value left as it was: readers show the drawing."""
     from pyhanko.pdf_utils import generic
-    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 
-    wr = IncrementalPdfFileWriter(io.BytesIO(data))
+    wr = _writer(data, password)
     field = next(f for f in wr.root["/AcroForm"]["/Fields"] if f.get_object()["/T"] == "amount")
     face = generic.StreamObject({generic.NameObject("/Type"): generic.NameObject("/XObject"),
                                  generic.NameObject("/Subtype"): generic.NameObject("/Form"),
@@ -208,6 +231,47 @@ def test_a_field_filled_in_after_signing_shows(tmp_path):
     twice = os.path.join(tmp_path, "twice.pdf")
     signing.sign_pdf(open(out, "rb").read(), twice, signer)
     assert [s["status"] for s in signing.validate(open(twice, "rb").read())] == ["valid", "valid"]
+
+
+def test_a_protected_form_is_read_decrypted(tmp_path):
+    """In a protected file the field names and values are encrypted, and pyHanko's .get() hands them back still
+    encrypted: the second of two people signing their own prepared field showed the first signature as changed,
+    and an amount shown on two pages (a field with two widgets) changed after signing showed as no change."""
+    doc = make_doc(2)
+    for name, r in (("ana", (50, 450, 200, 500)), ("bo", (220, 450, 370, 500))):
+        w = pymupdf.Widget()
+        w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_SIGNATURE, name, pymupdf.Rect(r)
+        doc[0].add_widget(w)
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.field_value = pymupdf.PDF_WIDGET_TYPE_TEXT, "note", "betales innen 14 dager"
+    w.rect = pymupdf.Rect(50, 520, 370, 540)
+    doc[0].add_widget(w)
+    amount, kids = doc.get_new_xref(), (doc.get_new_xref(), doc.get_new_xref())
+    doc.update_object(amount, f"<</FT/Tx/T(amount)/DA(/Helv 12 Tf 0 g)/V(1 000)/Kids[{kids[0]} 0 R {kids[1]} 0 R]>>")
+    for kid, pno in zip(kids, (0, 1)):
+        doc.update_object(kid, f"<</Type/Annot/Subtype/Widget/Rect[300 500 400 520]/Parent {amount} 0 R/F 4/P {doc.page_xref(pno)} 0 R>>")
+        annots = doc.xref_get_key(doc.page_xref(pno), "Annots")[1].strip("[]")
+        doc.xref_set_key(doc.page_xref(pno), "Annots", f"[{annots} {kid} 0 R]")
+    fields = doc.xref_get_key(doc.pdf_catalog(), "AcroForm/Fields")[1].strip("[]")
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm/Fields", f"[{fields} {amount} 0 R]")
+    ident = signing.create_id("Ola Nordmann", "pw12345")
+    signer = signing.load_signer(ident["id"], "pw12345")
+    first, both = os.path.join(tmp_path, "ana.pdf"), os.path.join(tmp_path, "both.pdf")
+    signing.sign_pdf(doc.tobytes(), first, signer, field_name="ana", protection=_LOCK)
+    signing.sign_pdf(open(first, "rb").read(), both, signer, field_name="bo", password="open1")
+    assert [s["status"] for s in signing.validate(open(both, "rb").read(), "open1")] == ["valid", "valid"]
+
+    def more(wr, obj):
+        from pyhanko.pdf_utils import generic
+        obj["/V"] = generic.TextStringObject("9 000 000")
+
+    wr = _writer(open(first, "rb").read(), "open1")
+    ref = next(f for f in wr.root["/AcroForm"]["/Fields"] if f.get_object()["/T"] == "amount")
+    more(wr, ref.get_object())
+    wr.mark_update(ref)
+    buf = io.BytesIO()
+    wr.write(buf)
+    assert [s["status"] for s in signing.validate(buf.getvalue(), "open1")] == ["modified"]
 
 
 def _tsa():

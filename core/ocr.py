@@ -12,6 +12,7 @@ import re
 
 import pymupdf
 
+from .geom import to_insert
 from .paths import TESSDATA
 
 LANGUAGES = {
@@ -57,7 +58,7 @@ def ocr_page(page: pymupdf.Page, languages: str = "eng", dpi: int = 300) -> int:
         opage.clean_contents()  # drops the picture from the resources too, else every page keeps a copy
         words = len(opage.get_text("words"))
         if words:
-            target = page.rect * page.derotation_matrix
+            target = page.rect * to_insert(page)
             target.normalize()
             # rotate=page.rotation maps the upright OCR page back onto the page's own axes
             page.show_pdf_page(target, ocr, 0, rotate=page.rotation, overlay=True)

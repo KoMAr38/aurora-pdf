@@ -128,7 +128,10 @@ class Snapshot:
         self._file.seek(0)
         while part := self._file.read(_CHUNK + 16):  # each part carries its 16-byte tag
             parts.append(aes.decrypt(len(parts).to_bytes(12, "big"), part, None))
-        return b"".join(parts)
+        data = b"".join(parts)
+        if len(data) != self.size:  # a file cut after a whole part decrypts without complaint: the length tells
+            raise OSError("undo step damaged")
+        return data
 
     def close(self) -> None:
         if self._file is not None:

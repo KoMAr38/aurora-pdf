@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 223 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 269 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -21,7 +21,7 @@ Programmet har 223 automatiske tester. 68 av dem styrer det ekte grensesnittet m
 | Fylle ut og signere | Tekstfelt, avkrysningsbokser, radioknapper og valglister. Signatur som tegnes, skrives eller hentes fra et bilde. Sertifikatsignatur med egen digital ID, og kontroll av signaturene i filen |
 | Beskytte | Passord for å åpne filen (AES-256 eller AES-128). Eierpassord med tillatelser for utskrift, kopiering, redigering, kommentarer og sider |
 | Vannmerke | Tekst eller bilde, med vinkel og gjennomsiktighet, én gang eller gjentatt over hele siden. Topptekst og bunntekst med sidenummer, dato og filnavn |
-| Sladde | Områder eller søketreff. Tekst, bildepunkter, kommentarer, skjemafelt og lenker under området blir fjernet fra filen |
+| Sladde | Områder eller søketreff. Tekst, bildepunkter, kommentarer, skjemafelt og lenker under området blir fjernet fra filen, også teksten en tagget fil gir til kopiering og skjermlesere |
 | Sider | Ny rekkefølge ved å dra, rotere, duplisere, trekke ut, slette, sette inn tom side, en annen PDF eller bilder, dele opp og beskjære |
 | OCR | Gjør skannede sider søkbare på norsk, engelsk og serbisk (latinsk og kyrillisk) |
 | Eksport | Word (.docx), ren tekst, sider som PNG eller JPG, og bildene som ligger i filen |
@@ -49,7 +49,7 @@ tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e
 
 Motoren er PyMuPDF, som bygger på MuPDF. pyHanko lager og kontrollerer sertifikatsignaturene, cryptography lager nøklene til de digitale ID-ene, pdf2docx står for Word-eksporten, og Pillow koder sidebildene. Grensesnittet er vanlig HTML, CSS og JavaScript i et WebView2-vindu fra pywebview. Det har ikke noe byggesteg: filene i `web/` er de som kjører.
 
-Koden er rundt 4 800 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS. Testene er 3 800 linjer.
+Koden er rundt 5 300 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS. Testene er 4 800 linjer.
 
 ### Valg som er verdt å se på
 
@@ -81,9 +81,9 @@ Koden er rundt 4 800 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS.
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 80 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker, eksport og plassering på beskårne og roterte sider |
-| `tests/test_api.py` | 58 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
-| `tests/test_ocr_sign.py` | 13 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, tidsstempler og langtidsdata |
+| `tests/test_engine.py` | 122 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
+| `tests/test_api.py` | 59 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_ocr_sign.py` | 16 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
 | `tests/e2e/test_ui.py` | 68 | Grensesnittet, styrt med mus og tastatur |
 
@@ -96,6 +96,8 @@ Noen av testene:
 - `test_failed_save_as_leaves_the_original_alone`: en lagring som feiler, gir ingen vei rundt eierpassordet
 - `test_ocr_adds_invisible_text_in_place`: den gjenkjente teksten havner over ordet i bildet, også på roterte sider
 - `test_redaction_removes_comments_fields_and_links_under_the_mark`: det sladdede nummeret finnes ikke noe sted i den lagrede filen, heller ikke i en utheving, et notat, et skjemafelt eller en lenke
+- `test_redaction_reaches_what_a_tagged_file_says_again`: i en tagget fil finnes det sladdede nummeret heller ikke i teksten for kopiering og skjermlesere eller i strukturtreet
+- `test_what_is_read_shows_where_it_is_on_any_page` og `test_what_is_added_lands_where_it_was_put_on_any_page`: ord, søketreff, lenker, tegninger, vannmerker, sidetall og beskjæring havner der siden viser dem, på sider som er rotert, beskåret, har MediaBox utenfor 0,0, CropBox utenfor MediaBox eller /UserUnit
 - `test_failed_edit_rolls_back`: en endring som feiler, etterlater ingen spor
 - `test_watermark_angle_is_visual`: vinkelen på vannmerket er den brukeren ser, også når siden er rotert
 - `test_quick_successive_drawings_all_land`: fire figurer tegnet rett etter hverandre havner alle i filen
@@ -164,6 +166,8 @@ Resten står i `START_HER.md`.
 
 **En revisjon av hele koden i oktober 2026 fant 20 feil og 16 mindre mangler.** Sladding fjernet et skjemafelt fra siden, men verdien ble liggende i feltets overordnede objekt og i XFA-pakken. En signatur sto som gyldig selv om et felt i det signerte skjemaet var endret etterpå. OCR lagret slettede kommentarer som usynlig tekst og la igjen en kopi av hver side i 300 dpi. Ctrl+Z rett etter et pennestrøk angret endringen før strøket. Og når et annet program hadde endret filen, skrev lagringen over den nyere versjonen. En ny gjennomgang av rettelsene fant ni feil til. Et dokumenttidsstempel ble vist som en ugyldig signatur, langtidsdata lagt til etter signeringen fikk signaturen til å se endret ut, og et felt som bare var tegnet på nytt etter signeringen, ble ikke oppdaget. En sladdet radioknapp beholdt valget sitt i filen. Alle har tester.
 
+**En tredje gjennomgang og en måling av hvor ting havner på sidene fant ti feil til.** I en tagget PDF ble den sladdede teksten liggende i filen: i teksten som kopiering og skjermlesere bruker (/ActualText og /Alt), og i kommentarer og felt som strukturtreet fortsatt pekte på. I en passordbeskyttet fil ble skjemafeltene lest krypterte, så den første av to signaturer sto som endret, og et endret beløp ble ikke oppdaget. En sladdet radioknapp beholdt valget når knappene delte én tegning, og et skadet angresteg i den midlertidige filen ble lest inn uten feilmelding. Lenkene på alle roterte sider lå et annet sted enn der de ble vist, og sladding på en rotert side kunne fjerne en lenke et annet sted på siden. På en beskåret og rotert skanning havnet OCR-teksten en beskjæringsbredde unna ordene, og det samme gjaldt bildevannmerker. Beskjæring virket ikke på sider der MediaBox ikke begynner i 0,0. Og på sider med en CropBox som går utenfor MediaBox, eller med /UserUnit, havnet tekst, søketreff, tegninger og vannmerker feil. Alle har tester.
+
 ---
 
 ## Forbehold
@@ -174,7 +178,7 @@ Resten står i `START_HER.md`.
 
 **Tillatelsene håndheves ikke med kryptering.** Passordet for å åpne filen krypterer innholdet. Tillatelsene for utskrift, kopiering og redigering følges av PDF-lesere som respekterer standarden.
 
-**Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området.
+**Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området. På en sladdet side i en tagget fil fjernes all alternativ tekst (/ActualText, /Alt og /E), også den som hører til tekst utenfor området.
 
 **Rene XFA-skjemaer vises ikke.** Et skjema som bare finnes som XFA (for eksempel fra Adobe LiveCycle), viser bare en venteside, og programmet sier fra når en slik fil åpnes. Et hybridskjema viser de vanlige feltene. XFA-pakken fjernes når feltene endres eller sladdes, slik at Adobe Reader viser det samme som andre lesere.
 

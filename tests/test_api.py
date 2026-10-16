@@ -659,6 +659,26 @@ def test_big_undo_steps_wait_on_disk(api, tmp_path, monkeypatch):
     assert api.s.doc[0].rotation == 0 and not call(api, "state")["doc"]["dirty"]
     ok(call(api, "redo"))
     assert api.s.doc[0].rotation == 90
+    cut = sess.Snapshot("cut", os.urandom(2500), [], [], 0, False)  # three parts; the temp file loses the last
+    cut._file.truncate(2 * 1016)
+    with pytest.raises(OSError):
+        cut.data  # noqa: B018 - a short undo step is refused, not shown
+
+
+def test_a_link_on_a_turned_page_is_where_it_shows(api, tmp_path):
+    """MuPDF gives a page's links in display space; turning them again put every link of a turned page elsewhere."""
+    from test_engine import page_ctm
+
+    doc = make_doc(1, rotation=90)
+    link = doc.get_new_xref()
+    doc.update_object(link, "<</Type/Annot/Subtype/Link/Rect[220 300 300 330]/A<</S/URI/URI(https://example.com)>>>>")
+    doc.xref_set_key(doc[0].xref, "Annots", f"[{link} 0 R]")
+    path = save_tmp(doc, tmp_path, "turned.pdf")
+    for step in (None, 90):  # as opened, and turned once more in the app
+        d = ok(call(api, "rotate", pages=[0], degrees=step))["doc"] if step else ok(call(api, "open_path", path=path))["doc"]
+        got = json.loads(api_server_info(api, d["pages"][0][2]))["links"][0]["r"]
+        want = pymupdf.Rect(220, 300, 300, 330) * page_ctm(api.s.doc[0])
+        assert max(abs(a - b) for a, b in zip(got, want)) < 1, (step, got, want)
 
 
 def test_ocr_job_is_one_undo_step(api, tmp_path):

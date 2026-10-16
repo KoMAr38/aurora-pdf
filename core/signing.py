@@ -325,21 +325,24 @@ def _own_trust_roots() -> list:
 
 def _field_values(root) -> dict:
     """Full name -> value and looks of every form field that is not a signature field (unreadable parts left
-    out). The looks count: an edit can draw a field anew (its appearance) and leave its value as it was."""
+    out). The looks count: an edit can draw a field anew (its appearance) and leave its value as it was.
+    Read with [], never .get(): in a protected file .get() hands back the string still encrypted."""
     out = {}
+
+    def val(d, key, default=None):
+        return d[key] if key in d else default
 
     def looks(widget):
         try:
-            ap = widget.get("/AP")
-            faces = ap.get_object().get("/N") if ap is not None else None
-            faces = faces.get_object() if faces is not None else None
+            ap = val(widget, "/AP")
+            faces = val(ap, "/N") if ap is not None else None
             if hasattr(faces, "data"):  # one drawing
                 drawn = hashlib.sha256(faces.data).hexdigest()
             elif faces is not None:  # a drawing per state (check box, radio button)
-                drawn = sorted((str(k), hashlib.sha256(v.get_object().data).hexdigest()) for k, v in faces.items())
+                drawn = sorted((str(k), hashlib.sha256(faces[k].data).hexdigest()) for k in faces)
             else:
                 drawn = None
-            return str(widget.get("/AS")), drawn
+            return str(val(widget, "/AS")), drawn
         except Exception:
             return None
 
@@ -347,15 +350,14 @@ def _field_values(root) -> dict:
         for ref in kids:
             try:
                 f = ref.get_object()
-                name = f"{prefix}.{f['/T']}" if prefix and "/T" in f else str(f.get("/T", prefix))
-                ft = f.get("/FT", kind)
-                sub = f.get("/Kids")
+                name = f"{prefix}.{f['/T']}" if prefix and "/T" in f else str(val(f, "/T", prefix))
+                ft = val(f, "/FT", kind)
+                sub = val(f, "/Kids")
                 if sub and any("/T" in k.get_object() for k in sub):
                     walk(sub, name, ft)  # kids without a name are its widgets: the value stays here
                 elif ft != "/Sig":
-                    v = f.get("/V")
                     widgets = [k.get_object() for k in sub] if sub else [f]
-                    out[name] = repr(v.get_object() if hasattr(v, "get_object") else v), [looks(w) for w in widgets]
+                    out[name] = repr(val(f, "/V")), [looks(w) for w in widgets]
             except Exception:
                 continue
 

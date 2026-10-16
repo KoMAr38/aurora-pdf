@@ -15,7 +15,7 @@ from typing import Callable, Iterable, Sequence
 
 import pymupdf
 
-from .geom import point_to_unrot, rect_to_unrot, rgb, rounded
+from .geom import page_ctm, rgb, rounded, to_insert, to_text, turn
 from .paths import FONT_SANS
 
 FONT_NAME = "AuroraSans"  # resource name for the bundled Unicode font (Latin, Cyrillic, Greek)
@@ -326,7 +326,8 @@ def watermark_text(
 
 
 def _stamp_text(page, center, text, fontsize, color_rgb, opacity, angle, behind) -> None:
-    pivot = point_to_unrot(center, page)
+    m, unit = to_text(page)
+    pivot, fontsize = pymupdf.Point(center) * m, fontsize * unit
     start = pivot + (-text_length(text, fontsize) / 2, fontsize * 0.35)
     morph = (pivot, pymupdf.Matrix(angle + page.rotation))
     _insert_unicode_text(
@@ -373,7 +374,7 @@ def watermark_image(
         w = page.rect.width * scale
         hh = w * ih / iw
         cx, cy = page.rect.width / 2, page.rect.height / 2
-        box = rect_to_unrot((cx - w / 2, cy - hh / 2, cx + w / 2, cy + hh / 2), page)
+        box = pymupdf.Rect(cx - w / 2, cy - hh / 2, cx + w / 2, cy + hh / 2) * to_insert(page)
         page.insert_image(box, stream=png, overlay=not behind, keep_proportion=True)
 
 
@@ -412,9 +413,10 @@ def add_header_footer(
         w, h = page.rect.width, page.rect.height
         x = {"l": margin, "c": (w - tl) / 2, "r": w - margin - tl}[position[1]]
         y = margin + fontsize * 0.8 if position[0] == "t" else h - margin
+        m, unit = to_text(page)
         _insert_unicode_text(
-            page, point_to_unrot((x, y), page), label,
-            fontsize=fontsize, color=color_rgb, rotate=page.rotation,
+            page, pymupdf.Point(x, y) * m, label,
+            fontsize=fontsize * unit, color=color_rgb, rotate=page.rotation,
         )
 
 
@@ -534,16 +536,19 @@ def crop_pages(doc: pymupdf.Document, pages: Sequence[int], frac: Sequence[float
     for pno in pages:
         page = doc[pno]
         w, h = page.rect.width, page.rect.height
-        r = rect_to_unrot((fx0 * w, fy0 * h, fx1 * w, fy1 * h), page)
-        cb = page.cropbox  # unrotated page coordinates are relative to the current crop box
-        r = pymupdf.Rect(r.x0 + cb.x0, r.y0 + cb.y0, r.x1 + cb.x0, r.y1 + cb.y0) & page.mediabox
-        page.set_cropbox(r)
+        # straight to PDF user space: PyMuPDF's set_cropbox() measures y from the MediaBox top, its mediabox from 0
+        r = pymupdf.Rect(fx0 * w, fy0 * h, fx1 * w, fy1 * h) * ~page_ctm(page) & page.mediabox
+        _set_box(doc, page, "CropBox", r)
 
 
 def uncrop_pages(doc: pymupdf.Document, pages: Sequence[int]) -> None:
     for pno in pages:
         page = doc[pno]
-        page.set_cropbox(page.mediabox)
+        _set_box(doc, page, "CropBox", page.mediabox)
+
+
+def _set_box(doc, page, key: str, r: pymupdf.Rect) -> None:
+    doc.xref_set_key(page.xref, key, "[" + " ".join(f"{v:.4f}".rstrip("0").rstrip(".") for v in r) + "]")
 
 
 # --- multi-file operations ----------------------------------------------------
@@ -649,8 +654,9 @@ def search_rects(doc: pymupdf.Document, query: str, limit: int = 5000) -> list[d
     if not query:
         return out
     for i, page in enumerate(doc):
+        m = turn(page)
         for r in page.search_for(query):
-            out.append({"p": i, "r": rounded(r * page.rotation_matrix)})
+            out.append({"p": i, "r": rounded(r * m)})
             if len(out) >= limit:
                 return out
     return out

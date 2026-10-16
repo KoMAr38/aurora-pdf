@@ -250,6 +250,133 @@ def test_points_land_in_place_on_a_cropped_turned_page(rot, box):
     assert abs(after[0] - before[0] - 10) < 1 and abs(after[1] - before[1]) < 1
 
 
+ODD_BOXES = {
+    "cropped": {"CropBox": "[60 80 552 742]"},
+    "media box away from 0,0": {"MediaBox": "[100 200 712 992]", "CropBox": "[150 260 650 950]"},
+    "crop past the media box": {"CropBox": "[100 100 900 900]"},
+    "user unit 2": {"UserUnit": "2"},
+}
+
+
+def _odd_page(box: str, rot: int, mark: bool = True):
+    """A page with an unusual box, turned by ``rot``; with ``mark`` a black MARK written by hand in PDF space."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    for k, v in ODD_BOXES[box].items():
+        doc.xref_set_key(page.xref, k, v)
+    if mark:
+        doc.xref_set_key(page.xref, "Resources", "<</Font<</F9<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>>>")
+        c = doc.get_new_xref()
+        doc.update_object(c, "<<>>")
+        doc.update_stream(c, b"BT /F9 30 Tf 200 400 Td (MARK) Tj ET")
+        doc.xref_set_key(page.xref, "Contents", f"{c} 0 R")
+    page = doc.reload_page(page)
+    page.set_rotation(rot)
+    return doc, page
+
+
+def _ink(page, color: str = "black", clip=None):
+    """Where the pixels of one colour (black or green) are on screen, in display space, within ``clip``."""
+    from PIL import Image, ImageChops
+
+    pix = page.get_pixmap(dpi=72, alpha=False)
+    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    x, y = (int(clip[0]), int(clip[1])) if clip else (0, 0)
+    if clip:
+        img = img.crop((x, y, int(clip[2]), int(clip[3])))
+    r, g, b = img.split()
+    green = color == "green"
+    mask = ImageChops.darker(ImageChops.darker(r.point(lambda v: 255 if v < 80 else 0),
+                                               g.point(lambda v: 255 if (v > 200 if green else v < 80) else 0)),
+                             b.point(lambda v: 255 if v < 80 else 0))
+    box = mask.getbbox()
+    return pymupdf.Rect(box) + (x, y, x, y) if box else None
+
+
+def page_ctm(page) -> pymupdf.Matrix:
+    """PDF user space -> what the page shows, straight from MuPDF (the test's own yardstick)."""
+    m = pymupdf.mupdf
+    ctm = m.FzMatrix()
+    m.pdf_page_transform(pymupdf._as_pdf_page(page), m.FzRect(), ctm)
+    return pymupdf.Matrix(ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f)
+
+
+def _near(a, b, tol=3):
+    return a is not None and b is not None and max(abs(u - v) for u, v in zip(a, b)) < tol
+
+
+def _within(ink, box, slack=3):
+    """The drawn glyphs sit inside the reported word box (font boxes are taller than the ink)."""
+    return ink is not None and (pymupdf.Rect(box) + (-slack, -slack, slack, slack)).contains(ink)
+
+
+@pytest.mark.parametrize("rot", (0, 90, 180, 270))
+@pytest.mark.parametrize("box", tuple(ODD_BOXES))
+def test_what_is_read_shows_where_it_is_on_any_page(box, rot):
+    """Words, search hits and links come back where the page shows them. PyMuPDF's page.rotation_matrix turns
+    about the CropBox as written, which is off when MuPDF clips it or scales by /UserUnit, and links come in
+    display space already: on every turned page a link's hotspot sat elsewhere, and redaction missed it."""
+    doc, page = _odd_page(box, rot)
+    ink = _ink(page)
+    word = next(w for w in an.text_layer(page) if w[5] == "MARK")
+    left, top, length, thick, ang = word[:5]
+    shown = {0: (left, top, left + length, top + thick), 90: (left - thick, top, left, top + length),
+             180: (left - length, top - thick, left, top), 270: (left, top - length, left + thick, top)}[ang]
+    assert ang == rot and _within(ink, shown)
+    assert _within(ink, pt.search_rects(doc, "MARK")[0]["r"])
+    links = []
+    for y, uri in ((300, "https://example.com/?pnr=12345678901"), (500, "https://example.com/stays")):
+        links.append(doc.get_new_xref())
+        doc.update_object(links[-1], f"<</Type/Annot/Subtype/Link/Rect[220 {y} 300 {y + 30}]/A<</S/URI/URI({uri})>>>>")
+    doc.xref_set_key(page.xref, "Annots", f"[{links[0]} 0 R {links[1]} 0 R]")
+    page = doc.reload_page(page)
+    where = pymupdf.Rect(220, 300, 300, 330) * page_ctm(page)
+    assert _near(an.page_links(page)[0]["r"], where)
+    an.mark_redaction(page, tuple(where + (-2, -2, 2, 2)))
+    an.apply_redactions(doc)
+    assert [lk["uri"] for lk in doc[0].get_links()] == ["https://example.com/stays"]
+
+
+@pytest.mark.parametrize("rot", (0, 90, 180, 270))
+@pytest.mark.parametrize("box", tuple(ODD_BOXES))
+def test_what_is_added_lands_where_it_was_put_on_any_page(box, rot):
+    """Drawings, stamps, watermarks, page numbers and crops land where the user put them. PyMuPDF takes each in
+    another space: a picture through ~page.transformation_matrix (no CropBox position on a turned page), text
+    from the CropBox as written, and without /UserUnit; a crop measured y from the MediaBox top."""
+    doc, page = _odd_page(box, rot, mark=False)
+    w, h = page.rect.width, page.rect.height
+    want = pymupdf.Rect(0.3 * w, 0.3 * h, 0.3 * w + 80, 0.3 * h + 50)
+    an.add_shape(page, "rect", tuple(want), width=0, fill="#00ff00", color="#00ff00")
+    assert _near(_ink(page, "green"), want)
+
+    doc, page = _odd_page(box, rot, mark=False)
+    pt.watermark_image(doc, png_bytes(100, 50, (0, 255, 0, 255), mark=False), opacity=1, scale=0.5)
+    page = doc[0]
+    w, h = page.rect.width, page.rect.height
+    assert _near(_ink(page, "green"), (w / 4, h / 2 - w / 8, 3 * w / 4, h / 2 + w / 8))
+
+    doc, page = _odd_page(box, rot, mark=False)
+    pt.watermark_text(doc, "MARK", opacity=1, rotate=0, fontsize=30, color="#000000")
+    pt.add_header_footer(doc, text="MARK", position="bc", fontsize=20, color="#000000", margin=40)
+    page = doc[0]
+    w, h = page.rect.width, page.rect.height
+    mid, foot = _ink(page, clip=(0, h * 0.25, w, h * 0.75)), _ink(page, clip=(0, h * 0.85, w, h))
+    assert _near(((mid.x0 + mid.x1) / 2, (mid.y0 + mid.y1) / 2), (w / 2, h / 2))  # the watermark, in the middle
+    assert _near(((foot.x0 + foot.x1) / 2, foot.y1), (w / 2, h - 40))  # the page number, on its line
+
+    doc, page = _odd_page(box, rot)
+    before = _ink(page)
+    w, h = page.rect.width, page.rect.height
+    pt.crop_pages(doc, [0], (0.1, 0.1, 0.9, 0.9))
+    page = doc[0]
+    assert _near((page.rect.width, page.rect.height), (0.8 * w, 0.8 * h))
+    assert _near(_ink(page), before + (-0.1 * w, -0.1 * h, -0.1 * w, -0.1 * h))
+    pt.uncrop_pages(doc, [0])  # the whole MediaBox
+    page = doc[0]
+    full = pymupdf.Rect(page.mediabox) * page_ctm(page)
+    assert _near((page.rect.width, page.rect.height), (full.width, full.height))
+
+
 def test_merge_extract_split_images(tmp_path):
     src = save_tmp(make_doc(3), tmp_path, "src.pdf")
     out = os.path.join(tmp_path, "m.pdf")
@@ -991,28 +1118,114 @@ def test_redaction_takes_a_fields_value_with_its_last_widget(tmp_path):
     assert b"041C043E0440043004320430" not in saved.tobytes(garbage=1, deflate=False, expand=255).upper()
 
 
-def test_redaction_takes_a_radio_choice_with_its_button():
-    """The group's value names the chosen button. With that button redacted, the other one shows Off and the
-    value would still say which was chosen."""
+@pytest.mark.parametrize("default", ("the choice", "another button"))
+@pytest.mark.parametrize("shared", (False, True))
+def test_redaction_takes_a_radio_choice_with_its_button(shared, default):
+    """The group's value names the chosen button. With that button redacted, the other ones show Off and the
+    value would still say which was chosen. Buttons can share one drawing of every state, so a button left
+    could show the choice too: what counts is what it shows. The default (/DV) stays when it names another
+    button, also when some other button goes."""
     doc = make_doc(1)
     page = doc[0]
-    group, kids, faces = doc.get_new_xref(), (doc.get_new_xref(), doc.get_new_xref()), []
+    group, kids, faces = doc.get_new_xref(), [doc.get_new_xref() for _ in range(3)], []
     for draw in ("q 0 g 4 4 8 8 re f Q", ""):
         faces.append(doc.get_new_xref())
         doc.update_object(faces[-1], "<</Type/XObject/Subtype/Form/BBox[0 0 16 16]>>")
         doc.update_stream(faces[-1], draw.encode())
-    doc.update_object(group, f"<</FT/Btn/Ff 49152/T(hiv)/V/positive/DV/positive/Kids[{kids[0]} 0 R {kids[1]} 0 R]>>")
-    for kid, state, y in zip(kids, ("positive", "negative"), (100, 140)):
+    dv = "positive" if default == "the choice" else "negative"
+    doc.update_object(group, f"<</FT/Btn/Ff 49152/T(hiv)/V/positive/DV/{dv}/Kids[{' '.join(f'{k} 0 R' for k in kids)}]>>")
+    names = ("positive", "negative", "unknown")
+    for kid, state, y in zip(kids, names, (100, 140, 180)):
+        states = "".join(f"/{n} {faces[0]} 0 R" for n in names) if shared else f"/{state} {faces[0]} 0 R"
         doc.update_object(kid, f"<</Type/Annot/Subtype/Widget/Rect[50 {y} 66 {y + 16}]/Parent {group} 0 R/F 4"
                                f"/P {page.xref} 0 R/AS/{'positive' if state == 'positive' else 'Off'}"
-                               f"/AP<</N<</{state} {faces[0]} 0 R/Off {faces[1]} 0 R>>>>>>")
-    doc.xref_set_key(page.xref, "Annots", f"[{kids[0]} 0 R {kids[1]} 0 R]")
+                               f"/AP<</N<<{states}/Off {faces[1]} 0 R>>>>>>")
+    doc.xref_set_key(page.xref, "Annots", "[" + " ".join(f"{k} 0 R" for k in kids) + "]")
     doc.xref_set_key(doc.pdf_catalog(), "AcroForm", f"<</Fields[{group} 0 R]>>")
     page = doc.reload_page(page)
-    an.mark_redaction(page, (45, 595 - 120, 75, 595 - 95))  # the "positive" button only
+    an.mark_redaction(page, (45, 595 - 200, 75, 595 - 175))  # the "unknown" button: choice and default stay
     assert an.apply_redactions(doc) == 1
-    assert [doc.xref_get_key(group, k)[0] for k in ("V", "DV")] == ["null", "null"]
+    assert [doc.xref_get_key(group, k)[1] for k in ("V", "DV")] == ["/positive", f"/{dv}"]
+    an.mark_redaction(doc[0], (45, 595 - 120, 75, 595 - 95))  # the chosen button
+    assert an.apply_redactions(doc) == 1
+    assert [doc.xref_get_key(group, k)[1] for k in ("V", "DV")] == ["null", "null" if dv == "positive" else "/negative"]
     assert doc.xref_get_key(group, "T") == ("string", "hiv")  # the group and its other button stay
+
+
+def test_redaction_keeps_a_field_that_a_redacted_widget_heads():
+    """Some form tools make a widget the field of widgets on other pages too (/T, /V and /Kids in one object):
+    emptying it with the widget took the field from the other pages."""
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.new_page()
+    w1, w2 = doc.get_new_xref(), doc.get_new_xref()
+    doc.update_object(w1, f"<</Type/Annot/Subtype/Widget/FT/Tx/T(navn)/V(Ola Nordmann)/DA(/Helv 12 Tf 0 g)"
+                          f"/Rect[50 700 250 720]/F 4/P {doc.page_xref(0)} 0 R/Kids[{w2} 0 R]>>")
+    doc.update_object(w2, f"<</Type/Annot/Subtype/Widget/Rect[50 700 250 720]/F 4/P {doc.page_xref(1)} 0 R/Parent {w1} 0 R>>")
+    doc.xref_set_key(doc.page_xref(0), "Annots", f"[{w1} 0 R]")
+    doc.xref_set_key(doc.page_xref(1), "Annots", f"[{w2} 0 R]")
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm", f"<</Fields[{w1} 0 R]>>")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.mark_redaction(doc[0], (45, 842 - 725, 255, 842 - 695))
+    assert an.apply_redactions(doc) == 1
+    assert [(f["n"], f["v"]) for f in an.page_fields(doc[1])] == [("navn", "Ola Nordmann")]
+
+
+def test_redaction_reaches_what_a_tagged_file_says_again(tmp_path):
+    """A tagged (accessible) file says its words again: in the /ActualText of its marked content, which copying
+    uses, in the /Alt and /ActualText of its structure elements, and its structure tree points at the comments
+    and fields, which kept their objects in the file after they left the page. On the page that was not
+    redacted the words for screen readers stay."""
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page()
+    font = "<</Font<</F9<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>>>"
+    for pno, text in ((0, "Personnummer 12345678901"), (1, "Kart over Oslo")):
+        c = doc.get_new_xref()
+        doc.update_object(c, "<<>>")
+        doc.update_stream(c, f"/Span <</MCID 0 /ActualText ({text})>> BDC BT /F9 12 Tf 72 700 Td ({text}) Tj ET EMC".encode())
+        doc.xref_set_key(doc.page_xref(pno), "Contents", f"{c} 0 R")
+        doc.xref_set_key(doc.page_xref(pno), "Resources", font)
+    page = doc[0]
+    words, _ = an.page_words(page)
+    k = next(i for i, w in enumerate(words) if w[4] == "12345678901")
+    box = pymupdf.Rect(words[k][:4])
+    hx = an.add_markup(page, "highlight", [k])  # stores the words in /Contents
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.field_value = pymupdf.PDF_WIDGET_TYPE_TEXT, "pnr", "12345678901"
+    w.rect = pymupdf.Rect(box.x0, box.y1 + 4, box.x1 + 60, box.y1 + 20)
+    wx = page.add_widget(w).xref
+    elems = []
+    for pno, alt, obj in ((0, "nummer 12345678901", None), (1, "Kart over Oslo", None), (0, "", hx), (0, "", wx)):
+        se = doc.get_new_xref()
+        kid = f"<</Type/OBJR/Obj {obj} 0 R>>" if obj else "0"
+        doc.update_object(se, f"<</Type/StructElem/S/P/Pg {doc.page_xref(pno)} 0 R/Alt({alt})/ActualText({alt})/K {kid}>>")
+        elems.append(f"{se} 0 R")
+    root = doc.get_new_xref()
+    doc.update_object(root, f"<</Type/StructTreeRoot/K[{' '.join(elems)}]>>")
+    doc.xref_set_key(doc.pdf_catalog(), "StructTreeRoot", f"{root} 0 R")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.mark_redaction(doc[0], [box.x0 - 2, box.y0 - 2, box.x1 + 62, box.y1 + 24])
+    assert an.apply_redactions(doc) == 1
+    out = str(tmp_path / "r.pdf")
+    pt.save_pdf(doc, out)
+    saved = pymupdf.open(out)
+    assert "12345678901" not in saved[0].get_text()
+    assert b"12345678901" not in saved.tobytes(garbage=1, deflate=False, expand=255)
+    assert b"Kart over Oslo" in saved.tobytes(garbage=1, deflate=False, expand=255)
+    assert "Kart over Oslo" in saved[1].get_text()
+
+
+@pytest.mark.parametrize("src, want", (
+    (b"/S <</MCID 0 /ActualText (a (nested) \\) one)>> BDC BT (x) Tj ET EMC", b"/S <</MCID 0  >> BDC BT (x) Tj ET EMC"),
+    (b"/P <</Lang (nb) /E (fork.) /Alt <FEFF0041>>> BDC EMC", b"/P <</Lang (nb)    >> BDC EMC"),
+    (b"/X <</Type /E /A <</O /Layout /Alt (z)>>>> BDC EMC", b"/X <</Type /E /A <</O /Layout  >>>> BDC EMC"),  # a value /E stays
+    (b"BT (/ActualText (x) /Alt) Tj [(a) 2 (/Alt) -3] TJ ET", b"BT (/ActualText (x) /Alt) Tj [(a) 2 (/Alt) -3] TJ ET"),
+    (b"BI /W 2 /H 1 /BPC 8 /CS /G ID \x00<</Alt(x)>> EI /S <</Alt(y)>> BDC", b"BI /W 2 /H 1 /BPC 8 /CS /G ID \x00<</Alt(x)>> EI /S << >> BDC"),
+))
+def test_redaction_cleans_only_the_words_of_marked_content(src, want):
+    """Only the keys go, with their values: text, arrays, picture data and other entries stay byte for byte."""
+    assert an._strip_alt(src) == want
 
 
 def test_doc_annots_lists_pages():

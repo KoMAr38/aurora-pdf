@@ -14,7 +14,7 @@ from typing import Sequence
 
 import pymupdf
 
-from .geom import display_angle, hexcolor, point_to_unrot, rect_to_unrot, rgb, rounded, to_pdf, vec_to_unrot
+from .geom import display_angle, hexcolor, point_to_unrot, rect_to_unrot, rgb, rounded, to_pdf, turn, vec_to_unrot
 from .pdftools import _prepare_png
 
 SKIP_TYPES = {pymupdf.PDF_ANNOT_POPUP, pymupdf.PDF_ANNOT_LINK, pymupdf.PDF_ANNOT_WIDGET}
@@ -78,7 +78,7 @@ def text_layer(page: pymupdf.Page) -> list[list]:
     if not words:
         return []
     dirs = _line_dirs(page, tp)
-    m = page.rotation_matrix
+    m = turn(page)
     out = []
     for i, (x0, y0, x1, y1, txt, bno, lno, _wno) in enumerate(words):
         ang = display_angle(dirs.get((bno, lno), (1.0, 0.0)), page)
@@ -132,9 +132,8 @@ def page_links(page: pymupdf.Page) -> list[dict]:
     xref the document summary lists per page), not its position: the overlay of this page is cached
     under its revision, which stays the same when other pages move."""
     out = []
-    m = page.rotation_matrix
     for link in page.get_links():
-        r = rounded(pymupdf.Rect(link["from"]) * m)
+        r = rounded(link["from"])  # MuPDF gives a freshly loaded page's links in display space
         kind = link.get("kind")
         if kind in (pymupdf.LINK_GOTO, pymupdf.LINK_NAMED) and link.get("page", -1) >= 0:
             out.append({"r": r, "px": page.parent.page_xref(link["page"])})
@@ -371,14 +370,17 @@ def apply_redactions(doc: pymupdf.Document) -> int:
     touch a mark go too, because they can hold the same words (a highlight stores them).
     A field whose last widget goes loses its value, which its parent object keeps, a radio
     or check box group whose chosen button goes loses that choice, and a hybrid form loses
-    its XFA packet, which holds every value and word of the form again.
+    its XFA packet, which holds every value and word of the form again. A tagged page says
+    its words again for copying and screen readers: that text goes on a redacted page too.
     """
-    n, heads = 0, set()
+    n, heads, gone, pages = 0, set(), set(), set()
     for page in doc:
         marks = [pymupdf.Rect(a.rect) for a in page.annots(types=[pymupdf.PDF_ANNOT_REDACT])]
         if not marks:
             continue
         n += len(marks)
+        pages.add(page.xref)
+        before = {x for x, _, _ in doc.page_annot_xrefs(page.number)}
 
         def hit(r) -> bool:
             return any(pymupdf.Rect(r).intersects(m) for m in marks)
@@ -389,9 +391,11 @@ def apply_redactions(doc: pymupdf.Document) -> int:
         heads |= {_field_object(doc, x) for x in widgets} - set(widgets)
         for xref in widgets:
             page.delete_widget(page.load_widget(xref))
-        for link in [lk for lk in page.get_links() if hit(lk["from"])]:
-            page.delete_link(link)
+        # MuPDF removes the links that touch a mark (a check of our own read their display rects as unrotated
+        # and took links elsewhere on a turned page)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS, graphics=1, text=0)
+        gone |= before - {x for x, _, _ in doc.page_annot_xrefs(page.number)}
+        _drop_alt_text(doc, page)
     if heads:
         fields = _fields_of(doc)
         for field in heads:
@@ -399,15 +403,201 @@ def apply_redactions(doc: pymupdf.Document) -> int:
                 for key in ("V", "DV", "RV", "I"):
                     _drop(doc, field, key)
                 continue
-            # a radio or check box group names the chosen button: a state no button left can show was redacted
-            states = {s for _, w in fields[field] for s in _states(doc, w)}
-            for key in ("V", "DV"):
-                kind, value = doc.xref_get_key(field, key)
-                if kind == "name" and value != "/Off" and value[1:] not in states:
-                    _drop(doc, field, key)
+            # a radio or check box group names the chosen button: keep it only while a button left shows it
+            # (buttons can share one drawing of every state, so what a button can show proves nothing); the
+            # default names another button as a rule, and goes only when it repeats the choice
+            shown = {doc.xref_get_key(w, "AS")[1] for _, w in fields[field]}
+            kind, value = doc.xref_get_key(field, "V")
+            if kind == "name" and value != "/Off" and value not in shown:
+                _drop(doc, field, "V")
+                if doc.xref_get_key(field, "DV") == (kind, value):
+                    _drop(doc, field, "DV")
     if n:
+        # a tagged file points at its comments and fields from the structure tree, which keeps their objects
+        # (and the words in them) in the file after they left the page: empty them
+        left = {x for pno in range(len(doc)) for x, _, _ in doc.page_annot_xrefs(pno)}
+        for xref in gone - left - set(_fields_of(doc)):  # a widget can be the field of widgets left elsewhere
+            doc.update_object(xref, "<<>>")
+        _drop_structure_text(doc, pages, gone)
         _drop_xfa(doc)
     return n
+
+
+_ALT_KEYS = ("ActualText", "Alt", "E")  # words a reader copies or reads aloud in place of the glyphs
+_ALT_HINT = re.compile(rb"/(?:ActualText|Alt|E)[\s(<\[/]")
+_ALT_NAMES = {b"/" + k.encode() for k in _ALT_KEYS}
+_WS = b" \t\r\n\f\x00"
+_TOKEN_END = re.compile(rb"[\s()<>\[\]{}/%]")
+
+
+def _object_end(data: bytes, i: int) -> int:
+    """The index after the object or token at ``i`` (no white space there): a string, hex string, array,
+    dictionary, name, number or operator. Strings nest and escape with a backslash."""
+    c = data[i]
+    if c == 0x28:  # (string)
+        depth = 0
+        while i < len(data):
+            c = data[i]
+            if c == 0x5C:
+                i += 1
+            elif c == 0x28:
+                depth += 1
+            elif c == 0x29:
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            i += 1
+        return i
+    if data.startswith(b"<<", i) or c == 0x5B:  # <<dictionary>> or [array]: whatever they hold, skipped whole
+        depth = 0
+        while i < len(data):
+            if data.startswith((b"<<", b">>"), i):
+                depth += 1 if data[i] == 0x3C else -1
+                i += 2
+            elif data[i] in b"[]":
+                depth += 1 if data[i] == 0x5B else -1
+                i += 1
+            elif data[i] in b"(<":
+                i = _object_end(data, i)
+                continue
+            else:
+                i += 1
+                continue
+            if depth == 0:
+                return i
+        return i
+    if c == 0x3C:  # <hex string>
+        j = data.find(b">", i)
+        return len(data) if j < 0 else j + 1
+    m = _TOKEN_END.search(data, i + 1)
+    return m.start() if m else len(data)
+
+
+def _strip_alt(data: bytes) -> bytes:
+    """A content stream without the /ActualText, /Alt and /E entries of its property lists (the << >> of BDC):
+    keys only, with their values. Strings, arrays and inline image data are stepped over whole."""
+    if not _ALT_HINT.search(data):
+        return data
+    out, last, i, keys = [], 0, 0, []  # keys: per open dictionary, whether a key comes next
+    while i < len(data):
+        c = data[i]
+        if c in _WS:
+            i += 1
+        elif c == 0x25:  # a comment runs to the end of the line
+            m = re.compile(rb"[\r\n]").search(data, i)
+            i = m.start() if m else len(data)
+        elif data.startswith(b"<<", i):
+            if keys:
+                keys[-1] = True  # a dictionary as a value: a key comes after it
+            keys.append(True)
+            i += 2
+        elif data.startswith(b">>", i):
+            if keys:
+                keys.pop()
+            i += 2
+        else:
+            j = _object_end(data, i)
+            if keys and keys[-1] and data[i:j] in _ALT_NAMES:
+                while j < len(data) and data[j] in _WS:
+                    j += 1
+                j = _object_end(data, j) if j < len(data) and not data.startswith(b">>", j) else j
+                out += [data[last:i], b" "]
+                last = j
+            elif keys:
+                keys[-1] = not keys[-1]
+            elif data[i:j] == b"ID" and data[j:j + 1] in (b" ", b"\n", b"\r"):
+                k = j + 1  # inline image data runs to an EI between white space
+                while True:
+                    k = data.find(b"EI", k)
+                    if k < 0 or (data[k - 1] in _WS and data[k + 2:k + 3] in (b"", b" ", b"\n", b"\r", b"\t")):
+                        break
+                    k += 2
+                j = len(data) if k < 0 else k + 2
+            i = j
+    out.append(data[last:])
+    return b"".join(out)
+
+
+def _drop_alt_text(doc, page) -> None:
+    """Glyphs under a mark are gone, but a tagged page can still say them in the /ActualText, /Alt or /E of its
+    marked content, which copying and screen readers use: take those out of the page and the drawings it uses."""
+    m = pymupdf.mupdf
+    pdf = pymupdf._as_pdf_document(doc)
+    streams = list(page.get_contents()) + [x[0] for x in doc.get_page_xobjects(page.number)]
+    holders = [m.pdf_dict_get_inheritable(m.pdf_load_object(pdf, page.xref), m.PdfObj(m.PDF_ENUM_NAME_Resources))]
+    for xref in streams:
+        data = doc.xref_stream(xref)
+        # shortcut: _strip_alt reads streams as MuPDF writes them after a redaction (no comments, plain names,
+        # inline pictures in hex); called on a stream from elsewhere it needs a full content parser
+        clean = _strip_alt(data)
+        if clean != data:
+            doc.update_stream(xref, clean)
+        holders.append(m.pdf_dict_gets(m.pdf_load_object(pdf, xref), "Resources"))
+    for res in holders:  # property lists named in the resources (/Span /P1 BDC)
+        props = m.pdf_dict_gets(res, "Properties") if m.pdf_is_dict(res) else None
+        if props is None or not m.pdf_is_dict(props):
+            continue
+        for i in range(m.pdf_dict_len(props)):
+            entry = m.pdf_dict_get_val(props, i)
+            if m.pdf_is_dict(entry):
+                for key in _ALT_KEYS:
+                    m.pdf_dict_dels(entry, key)
+
+
+def _drop_structure_text(doc, pages: set[int], objs: set[int]) -> None:
+    """The structure tree of a tagged file says the words of its elements again (/ActualText, /Alt, /E): take them
+    out of every element with content on a redacted page (``pages``, page xrefs) or pointing at a removed comment
+    or field (``objs``), and out of the elements around it."""
+    m = pymupdf.mupdf
+    pdf = pymupdf._as_pdf_document(doc)
+    root = m.pdf_dict_getp(m.pdf_trailer(pdf), "Root/StructTreeRoot")
+    if not m.pdf_is_dict(root):
+        return
+    seen = set()
+
+    def num(obj) -> int:
+        return m.pdf_to_num(obj) if m.pdf_is_indirect(obj) else 0
+
+    def clean(elem) -> None:
+        for key in _ALT_KEYS:
+            m.pdf_dict_dels(elem, key)
+
+    def walk(node, pg: int, path: list) -> None:
+        if num(node):
+            if num(node) in seen:
+                return
+            seen.add(num(node))
+        own = m.pdf_dict_gets(node, "Pg")
+        pg = num(own) or pg
+        path = path + [node]
+        hit = pg in pages
+        kids = m.pdf_dict_gets(node, "K")
+        items = [m.pdf_array_get(kids, i) for i in range(m.pdf_array_len(kids))] if m.pdf_is_array(kids) else [kids]
+        for item in items:
+            if not m.pdf_is_dict(item):
+                continue  # a marked-content number: content on pg
+            kind = m.pdf_to_name(m.pdf_dict_gets(item, "Type"))
+            if kind in ("MCR", "OBJR"):
+                hit = hit or (num(m.pdf_dict_gets(item, "Pg")) or pg) in pages or num(m.pdf_dict_gets(item, "Obj")) in objs
+            else:
+                walk(item, pg, path)
+        if hit:
+            for elem in path:
+                clean(elem)
+
+    walk(root, 0, [])
+    # elements the tree does not reach still sit in the file through the parent tree
+    for page_xref in pages:
+        key = m.pdf_dict_gets(m.pdf_load_object(pdf, page_xref), "StructParents")
+        if m.pdf_is_int(key):
+            entry = m.pdf_lookup_number(m.pdf_dict_gets(root, "ParentTree"), m.pdf_to_int(key))
+            elems = [m.pdf_array_get(entry, i) for i in range(m.pdf_array_len(entry))] if m.pdf_is_array(entry) else [entry]
+            for elem in elems:
+                for _ in range(64):  # the element and the ones around it, up to the root
+                    if not m.pdf_is_dict(elem) or m.pdf_to_num(elem) == num(root):
+                        break
+                    clean(elem)
+                    elem = m.pdf_dict_gets(elem, "P")
 
 
 def count_redactions(doc: pymupdf.Document) -> int:
@@ -480,7 +670,8 @@ def resize_annot(page, xref: int, rect: Sequence[float]) -> None:
     a = _load(page, xref)
     if a.type[0] not in RESIZABLE:
         raise ValueError("annotation cannot be resized")
-    r = rect_to_unrot(rect, page)
+    r = pymupdf.Rect(rect) * page.derotation_matrix  # set_rect() takes the space a.rect is read in
+    r.normalize()
     if r.width < 4 or r.height < 4:
         raise ValueError("too small")
     if a.type[0] in BORDERED:  # set_rect takes the inner box; the border grows it back
@@ -684,15 +875,6 @@ def _draw(page, xref: int, w, kind: str, text: str | None) -> None:
     _update(doc, xref, w)
     if other and kind != "list" and not w.field_flags & FF_MULTILINE:
         _upright(doc, xref)
-
-
-def _states(doc, xref: int) -> set[str]:
-    """The appearance states of a button widget (its /AP /N names), e.g. {"Off", "Yes"}."""
-    m = pymupdf.mupdf
-    faces = m.pdf_dict_getp(m.pdf_load_object(pymupdf._as_pdf_document(doc), xref), "AP/N")
-    if not m.pdf_is_dict(faces) or m.pdf_is_stream(faces):
-        return set()
-    return {m.pdf_to_name(m.pdf_dict_get_key(faces, i)) for i in range(m.pdf_dict_len(faces))}
 
 
 def _drop(doc, xref: int, key: str) -> None:
