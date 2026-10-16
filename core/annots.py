@@ -14,7 +14,7 @@ from typing import Sequence
 
 import pymupdf
 
-from .geom import display_angle, hexcolor, point_to_unrot, rect_to_unrot, rgb, rounded, vec_to_unrot
+from .geom import display_angle, hexcolor, point_to_unrot, rect_to_unrot, rgb, rounded, to_pdf, vec_to_unrot
 from .pdftools import _prepare_png
 
 SKIP_TYPES = {pymupdf.PDF_ANNOT_POPUP, pymupdf.PDF_ANNOT_LINK, pymupdf.PDF_ANNOT_WIDGET}
@@ -298,7 +298,6 @@ MARKUP_ADDERS = {
     "highlight": "add_highlight_annot",
     "underline": "add_underline_annot",
     "strikeout": "add_strikeout_annot",
-    "squiggly": "add_squiggly_annot",
 }
 
 
@@ -317,7 +316,7 @@ def add_markup(page, kind: str, word_indices: Sequence[int], *, color=None, opac
         groups[key] = groups[key] | pymupdf.Rect(x0, y0, x1, y1) if key in groups else pymupdf.Rect(x0, y0, x1, y1)
     quads = [_quad_for(r, dirs.get(k, (1.0, 0.0))) for k, r in groups.items()]
     a = getattr(page, MARKUP_ADDERS[kind])(quads=quads)
-    default = {"highlight": "#facc15", "underline": "#16a34a", "strikeout": "#dc2626", "squiggly": "#7c3aed"}[kind]
+    default = {"highlight": "#facc15", "underline": "#16a34a", "strikeout": "#dc2626"}[kind]
     text = " ".join(w[4] for w in chosen)
     return _finish(a, author, stroke=rgb(color or default), opacity=opacity, content=text[:2000])
 
@@ -370,8 +369,11 @@ def apply_redactions(doc: pymupdf.Document) -> int:
 
     MuPDF removes text, image pixels and line art. Comments, form fields and links that
     touch a mark go too, because they can hold the same words (a highlight stores them).
+    A field whose last widget goes loses its value, which its parent object keeps, a radio
+    or check box group whose chosen button goes loses that choice, and a hybrid form loses
+    its XFA packet, which holds every value and word of the form again.
     """
-    n = 0
+    n, heads = 0, set()
     for page in doc:
         marks = [pymupdf.Rect(a.rect) for a in page.annots(types=[pymupdf.PDF_ANNOT_REDACT])]
         if not marks:
@@ -383,11 +385,28 @@ def apply_redactions(doc: pymupdf.Document) -> int:
 
         for xref in [a.xref for a in page.annots() if a.type[0] != pymupdf.PDF_ANNOT_REDACT and hit(a.rect)]:
             page.delete_annot(page.load_annot(xref))
-        for xref in [w.xref for w in _widgets(page) if hit(w.rect)]:
+        widgets = [w.xref for w in _widgets(page) if hit(w.rect)]
+        heads |= {_field_object(doc, x) for x in widgets} - set(widgets)
+        for xref in widgets:
             page.delete_widget(page.load_widget(xref))
         for link in [lk for lk in page.get_links() if hit(lk["from"])]:
             page.delete_link(link)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS, graphics=1, text=0)
+    if heads:
+        fields = _fields_of(doc)
+        for field in heads:
+            if field not in fields:  # no widget of it is left on any page
+                for key in ("V", "DV", "RV", "I"):
+                    _drop(doc, field, key)
+                continue
+            # a radio or check box group names the chosen button: a state no button left can show was redacted
+            states = {s for _, w in fields[field] for s in _states(doc, w)}
+            for key in ("V", "DV"):
+                kind, value = doc.xref_get_key(field, key)
+                if kind == "name" and value != "/Off" and value[1:] not in states:
+                    _drop(doc, field, key)
+    if n:
+        _drop_xfa(doc)
     return n
 
 
@@ -410,21 +429,12 @@ def delete_annot(page, xref: int) -> None:
 
 
 def _pdf_coords(page, pts) -> str:
-    inv = ~page.transformation_matrix
+    inv = to_pdf(page)
     out = []
     for p in pts:
         q = pymupdf.Point(p) * inv
         out.append(f"{q.x:g} {q.y:g}")
     return " ".join(out)
-
-
-def _inner_rect(a: pymupdf.Annot) -> pymupdf.Rect:
-    """Rect to hand back to set_rect so the border does not grow the box on every edit."""
-    r = pymupdf.Rect(a.rect)
-    if a.type[0] in BORDERED:
-        w = ((a.border or {}).get("width") or 0) / 2
-        r = pymupdf.Rect(r.x0 + w, r.y0 + w, r.x1 - w, r.y1 - w)
-    return r
 
 
 def move_annot(page, xref: int, dx: float, dy: float) -> None:
@@ -448,7 +458,7 @@ def move_annot(page, xref: int, dx: float, dy: float) -> None:
     # Shift the stored /Rect itself. Going through set_rect() drifts for NoRotate
     # annotations (sticky notes) on rotated pages, whose reported rect is turned about
     # a corner; a pure translation of /Rect is exact for every box-shaped type.
-    inv = ~page.transformation_matrix
+    inv = to_pdf(page)
     d = pymupdf.Point(v) * inv - pymupdf.Point(0, 0) * inv
     targets = [a.xref]
     popup = getattr(a, "popup_xref", 0)
@@ -676,10 +686,29 @@ def _draw(page, xref: int, w, kind: str, text: str | None) -> None:
         _upright(doc, xref)
 
 
+def _states(doc, xref: int) -> set[str]:
+    """The appearance states of a button widget (its /AP /N names), e.g. {"Off", "Yes"}."""
+    m = pymupdf.mupdf
+    faces = m.pdf_dict_getp(m.pdf_load_object(pymupdf._as_pdf_document(doc), xref), "AP/N")
+    if not m.pdf_is_dict(faces) or m.pdf_is_stream(faces):
+        return set()
+    return {m.pdf_to_name(m.pdf_dict_get_key(faces, i)) for i in range(m.pdf_dict_len(faces))}
+
+
 def _drop(doc, xref: int, key: str) -> None:
     """Take ``key`` out of an object: xref_set_key(xref, key, "null") leaves "/key null" in the file."""
     m = pymupdf.mupdf
     m.pdf_dict_dels(m.pdf_load_object(pymupdf._as_pdf_document(doc), xref), key)
+
+
+def _drop_xfa(doc) -> None:
+    """A hybrid form keeps its values and words again in an XFA packet, which Adobe Reader shows instead of
+    the fields: after a fill, reset, flattening or redaction it would show what was there before. Without
+    the packet every reader shows the fields."""
+    m = pymupdf.mupdf
+    form = m.pdf_dict_getp(m.pdf_trailer(pymupdf._as_pdf_document(doc)), "Root/AcroForm")
+    if m.pdf_is_dict(form):
+        m.pdf_dict_dels(form, "XFA")
 
 
 def _chosen(doc, xref: int) -> list[str]:
@@ -720,14 +749,19 @@ def _turn(page, xref: int, state: str, fields: dict | None = None) -> None:
             m.pdf_dict_dels(obj, "V")  # a widget's own /V (update() wrote one) would hide the field's
 
 
-def set_field(page, xref: int, value) -> None:
+def set_field(page, xref: int, value) -> list[int]:
+    """Give the field of widget ``xref`` a value. Returns the pages it changed: a field can show on several."""
     w = _widget(page, xref)
     if w.field_flags & FF_READONLY:
         raise ValueError("field is read-only")
     kind = _widget_kind(w)
     if kind == "text" and w.text_maxlen:
         value = str(value)[: w.text_maxlen]  # what is typed; a longer value already in the file stays
-    _fill(page, xref, w, kind, value)
+    doc = page.parent
+    fields = None if _field_object(doc, xref) == xref else _fields_of(doc)  # read once, for both below
+    _fill(page, xref, w, kind, value, fields)
+    _drop_xfa(doc)
+    return sorted({p.number for p, _ in _widgets_of(page, xref, fields)})
 
 
 def _need_appearances(doc) -> tuple[int, str]:
@@ -833,6 +867,7 @@ def forget_passwords(doc: pymupdf.Document) -> None:
                 continue
             if secret:  # its other widgets are emptied with it
                 page, xref = doc[pno], m.pdf_to_num(obj)
+                _drop_xfa(doc)
                 try:
                     _fill(page, xref, _widget(page, xref), "text", "")
                 except Exception:  # the save goes on, and the value goes at least
@@ -841,6 +876,17 @@ def forget_passwords(doc: pymupdf.Document) -> None:
 
 def has_fields(doc: pymupdf.Document) -> bool:
     return bool(doc.is_form_pdf)
+
+
+def xfa_only(doc: pymupdf.Document) -> bool:
+    """A dynamic XFA form: its pages and fields are in the XFA packet, which MuPDF does not draw, so only a
+    "please wait" page shows. A hybrid form has its fields as well, and they show."""
+    m = pymupdf.mupdf
+    trailer = m.pdf_trailer(pymupdf._as_pdf_document(doc))
+    if m.pdf_is_null(m.pdf_dict_getp(trailer, "Root/AcroForm/XFA")):
+        return False
+    return bool(m.pdf_to_bool(m.pdf_dict_getp(trailer, "Root/NeedsRendering"))
+                or not m.pdf_array_len(m.pdf_dict_getp(trailer, "Root/AcroForm/Fields")))
 
 
 def reset_fields(doc: pymupdf.Document) -> int:
@@ -871,9 +917,12 @@ def reset_fields(doc: pymupdf.Document) -> int:
         elif kind in ("combo", "list", "text"):
             value = _chosen(doc, field)  # the field's: a widget /Kids does not list keeps a value of its own
             _fill(page, w.xref, w, kind, value if w.field_flags & FF_MULTISELECT else (value or [""])[0], fields)
+    if n:
+        _drop_xfa(doc)
     return n
 
 
 def flatten(doc: pymupdf.Document, *, annots: bool = False) -> None:
     """Burn form fields (and optionally all annotations) into the page content."""
     doc.bake(annots=annots, widgets=True)
+    _drop_xfa(doc)  # else Adobe Reader shows the form's fields again

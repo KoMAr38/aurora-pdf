@@ -29,6 +29,7 @@ def api():
     a = Api(Session(), Dialogs(), test_mode=True)
     a._dialogs.script = []
     yield a
+    a._jobs.stop_all()  # as main() does: a job left running must not work on a closed document
     a.s.close()
 
 
@@ -93,13 +94,22 @@ def test_errors_are_codes(api, tmp_path):
     assert call(api, "open_path", path=str(tmp_path / "missing.pdf"))["error"] == "FILE_NOT_FOUND"
 
 
-def test_failed_edit_rolls_back(api, tmp_path):
+def test_failed_edit_rolls_back(api, tmp_path, monkeypatch):
     res, _ = opened(api, tmp_path)
     revs = [p[2] for p in res["doc"]["pages"]]
     bad = call(api, "reorder", order=[0, 0, 1])  # not a permutation
     assert not bad["ok"]
+    real = pt.rotate_pages
+
+    def half(doc, pages, degrees):  # fails after it changed the document
+        real(doc, pages, degrees)
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(pt, "rotate_pages", half)
+    assert call(api, "rotate", pages=[0], degrees=90)["error"] == "ERROR"
     d = call(api, "state")["doc"]
     assert [p[2] for p in d["pages"]] == revs and not d["dirty"] and d["undo"] == ""
+    assert api.s.doc[0].rotation == 0
 
 
 def test_structural_edits_keep_revisions(api, tmp_path):
@@ -113,6 +123,64 @@ def test_structural_edits_keep_revisions(api, tmp_path):
     assert len(d["pages"]) == 4 and d["pages"][0][2] == revs[2] and d["pages"][1][2] not in revs
     d = ok(call(api, "duplicate", pages=[0]))["doc"]
     assert len(d["pages"]) == 5 and len({p[2] for p in d["pages"]}) == 5
+    before = [p[2] for p in d["pages"]]
+    d = ok(call(api, "insert_file_dialog", paths=[save_tmp(make_doc(1), tmp_path, "one.pdf")], at=1))["doc"]
+    after = [p[2] for p in d["pages"]]
+    assert after[:1] + after[2:] == before and after[1] not in before  # the pages after it moved, unchanged
+    assert ok(call(api, "delete_pages"))["doc"]["undo"] == "insert"  # no pages named: no step
+
+
+def test_a_damaged_picture_is_not_supported(api, tmp_path):
+    opened(api, tmp_path)
+    bad = tmp_path / "scan.png"
+    bad.write_bytes(b"\x89PNG\r\n\x1a\n" + b"cut off" * 50)
+    assert call(api, "insert_file_dialog", paths=[str(bad)])["error"] == "NOT_SUPPORTED"
+    assert call(api, "open_path", path=str(bad))["error"] == "NOT_SUPPORTED"
+
+
+def test_a_pure_xfa_form_is_told_apart_from_a_hybrid_one(api, tmp_path):
+    """MuPDF does not draw XFA: a dynamic XFA form shows only its "please wait" page, so the UI says why."""
+    def with_xfa(doc, name, needs_rendering):
+        cat = doc.pdf_catalog()
+        x = doc.get_new_xref()
+        doc.update_object(x, "<<>>")
+        doc.update_stream(x, b"<xdp:xdp xmlns:xdp='http://ns.adobe.com/xdp/'/>")
+        doc.xref_set_key(cat, "AcroForm/XFA", f"{x} 0 R")
+        if needs_rendering:
+            doc.xref_set_key(cat, "NeedsRendering", "true")
+        return save_tmp(doc, tmp_path, name)
+
+    hybrid = make_doc(1)
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_TEXT, "navn", pymupdf.Rect(50, 50, 200, 70)
+    hybrid[0].add_widget(w)
+    for path, xfa in ((with_xfa(make_doc(1), "dynamic.pdf", True), True),
+                      (with_xfa(make_doc(1), "no-fields.pdf", False), True),
+                      (with_xfa(hybrid, "hybrid.pdf", False), False),
+                      (save_tmp(make_doc(1), tmp_path, "plain.pdf"), False)):
+        assert ok(call(api, "open_path", path=path))["doc"]["xfa"] is xfa, path
+
+
+def test_a_page_that_loses_a_link_is_drawn_again(api, tmp_path):
+    """Deleting a page takes away the links to it from the other pages: they change too."""
+    doc = make_doc(3)
+    doc[0].insert_link({"kind": pymupdf.LINK_GOTO, "from": pymupdf.Rect(10, 10, 50, 50), "page": 2})
+    revs = [p[2] for p in ok(call(api, "open_path", path=save_tmp(doc, tmp_path, "links.pdf")))["doc"]["pages"]]
+    pages = ok(call(api, "delete_pages", pages=[2]))["doc"]["pages"]
+    assert pages[0][2] != revs[0] and pages[1][2] == revs[1]
+
+
+def test_save_keeps_a_version_another_program_wrote_meanwhile(api, tmp_path):
+    """A synced or a colleague's newer version in the file's place is not overwritten: Save As is offered."""
+    _, path = opened(api, tmp_path)
+    ok(call(api, "rotate", pages=[0]))
+    save_tmp(make_doc(1), tmp_path, "doc.pdf")
+    newer = open(path, "rb").read()
+    assert call(api, "save")["error"] == "FILE_CHANGED" and open(path, "rb").read() == newer
+    answers(api, str(tmp_path / "mine.pdf"))
+    ok(call(api, "save_as"))
+    ok(call(api, "rotate", pages=[0]))
+    assert ok(call(api, "save"))["doc"]["name"] == "mine.pdf"  # its own file again: saved as usual
 
 
 def test_save_as_and_recent(api, tmp_path):
@@ -456,6 +524,37 @@ def test_merge_and_images_to_pdf(api, tmp_path):
     assert ok(call(api, "images_to_pdf_dialog"))["pages"] == 1
 
 
+def test_settings_that_cannot_be_written_do_not_fail_the_work(api, tmp_path, monkeypatch):
+    """settings.json held by another program (backup, antivirus): the recent list goes, the open and save stay."""
+    from core import settings
+
+    monkeypatch.setattr(settings, "_file", lambda: tmp_path / "missing" / "settings.json")
+    ok(call(api, "open_path", path=save_tmp(make_doc(1), tmp_path, "a.pdf")))
+    ok(call(api, "rotate", pages=[0]))
+    assert ok(call(api, "save"))["doc"]["name"] == "a.pdf"
+
+
+def test_the_open_file_is_merged_only_as_saved_on_screen(api, tmp_path):
+    """Merging reads files from disk: the open file's unsaved changes would be missing from the result."""
+    _, path = opened(api, tmp_path)
+    other = save_tmp(make_doc(1), tmp_path, "other.pdf")
+    ok(call(api, "delete_pages", pages=[0]))
+    answers(api, str(tmp_path / "m.pdf"))
+    assert call(api, "merge_run", paths=[path, other])["error"] == "SAVE_FIRST"
+    ok(call(api, "save"))
+    assert ok(call(api, "merge_run", paths=[path, other]))["pages"] == 3
+
+
+def test_a_field_on_two_pages_is_redrawn_on_both(api, tmp_path):
+    """A page gets a new revision when it changes; the page image of a field's other widget changes too."""
+    from test_engine import _form_made_elsewhere
+
+    doc, _, x = _form_made_elsewhere()  # "reka" has a widget on page 1 and on page 2
+    revs = [p[2] for p in ok(call(api, "open_path", path=save_tmp(doc, tmp_path, "form.pdf")))["doc"]["pages"]]
+    pages = ok(call(api, "field_set", page=0, xref=x["reka"], value="Ниш"))["doc"]["pages"]
+    assert [p[2] != r for p, r in zip(pages, revs)] == [True, True]
+
+
 # --- jobs -----------------------------------------------------------------------------------
 
 
@@ -504,14 +603,57 @@ def test_word_export_leaves_the_document_free(api, tmp_path):
     assert free >= 3
 
 
+def test_closing_stops_a_running_export_which_cleans_up(api, tmp_path, monkeypatch):
+    """The process ends when the window closes: a running job is cancelled and waited for first, so the Word
+    export's plain copy of the document does not stay behind in the temp folder."""
+    opened(api, tmp_path)
+    copies = []
+
+    def slow(pdf, out, progress=None, password=None):
+        copies.append(pdf)
+        while progress(0, 1) is not False:
+            time.sleep(0.02)
+        raise pt.Cancelled()
+
+    monkeypatch.setattr(pt, "export_docx", slow)
+    answers(api, str(tmp_path / "out.docx"))
+    job = ok(call(api, "export_start", kind="docx"))["job"]
+    for _ in range(500):
+        if copies:
+            break
+        time.sleep(0.01)
+    assert os.path.exists(copies[0]) and call(api, "state")["jobs"]
+    api._jobs.stop_all(timeout=5)
+    assert call(api, "job_status", id=job)["job"]["state"] == "cancelled" and not os.path.exists(copies[0])
+
+
+def test_undo_keeps_to_its_limits(api, tmp_path, monkeypatch):
+    from core import session as sess
+
+    monkeypatch.setattr(sess, "MAX_UNDO", 2)
+    opened(api, tmp_path)
+    for _ in range(4):
+        ok(call(api, "rotate", pages=[0], degrees=90))
+    assert len(api.s.undo_stack) == 2
+    monkeypatch.setattr(sess, "MAX_UNDO_BYTES", 1)  # past the memory limit the last step still stays
+    ok(call(api, "rotate", pages=[0], degrees=90))
+    assert len(api.s.undo_stack) == 1
+
+
 def test_big_undo_steps_wait_on_disk(api, tmp_path, monkeypatch):
     from core import session as sess
 
     monkeypatch.setattr(sess, "SPILL_BYTES", 1)  # every snapshot counts as big here
+    monkeypatch.setattr(sess, "_CHUNK", 1000)  # and goes in parts (AES-GCM takes at most 2 GiB at once)
     opened(api, tmp_path)
     ok(call(api, "rotate", pages=[0], degrees=90))
     ok(call(api, "rotate", pages=[0], degrees=90))
     assert [s.on_disk for s in api.s.undo_stack] == [True, True]
+    snap = api.s.undo_stack[0]
+    snap._file.seek(0)
+    spilled = snap._file.read()
+    assert b"%PDF" not in spilled  # encrypted: a protected document is not readable in the temp folder
+    assert len(spilled) == snap.size + 16 * -(-snap.size // 1000) and snap.size > 3000  # a tag per part
     ok(call(api, "undo"))
     ok(call(api, "undo"))
     assert api.s.doc[0].rotation == 0 and not call(api, "state")["doc"]["dirty"]
@@ -590,6 +732,58 @@ def test_counter_signature_keeps_the_first_one(api, tmp_path, protected):
     d = ok(call(api, "sign_digital", id=second, password="pw5678", page=0, rect=[200, 300, 380, 360]))["doc"]
     assert d["path"] == os.path.abspath(out)
     assert _statuses(out, "open1" if protected else None) == ["valid", "valid"]
+
+
+def test_an_empty_signature_field_is_no_signature(api, tmp_path):
+    doc = make_doc(1)
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_SIGNATURE, "sig", pymupdf.Rect(50, 50, 200, 90)
+    doc[0].add_widget(w)
+    assert not ok(call(api, "open_path", path=save_tmp(doc, tmp_path, "empty.pdf")))["doc"]["signed"]
+    assert ok(call(api, "open_path", path=_signed_file(tmp_path, "signed.pdf")))["doc"]["signed"]
+
+
+def test_a_signed_file_replaced_on_disk_is_copied_and_signed_as_opened(api, tmp_path):
+    """Save As copies a signed, unchanged file byte for byte, and a further signature goes on top of its bytes:
+    the bytes as opened, not what another program has put in the file's place since."""
+    f = _signed_file(tmp_path, "contract.pdf")
+    as_opened = open(f, "rb").read()
+    ok(call(api, "open_path", path=f))
+    save_tmp(make_doc(1), tmp_path, "contract.pdf")  # a sync tool puts another version there
+    assert [i["status"] for i in ok(call(api, "signatures_validate"))["items"]] == ["valid"]
+    copy = str(tmp_path / "copy.pdf")
+    answers(api, copy)
+    ok(call(api, "save_as"))
+    assert open(copy, "rb").read() == as_opened
+    save_tmp(make_doc(1), tmp_path, "copy.pdf")
+    second = ok(call(api, "id_create", name="Bo Andre", password="pw5678"))["id"]
+    out = str(tmp_path / "countersigned.pdf")
+    answers(api, out)
+    ok(call(api, "sign_digital", id=second, password="pw5678"))
+    assert open(out, "rb").read().startswith(as_opened) and _statuses(out) == ["valid", "valid"]
+
+
+def test_signing_needs_the_right_to_fill_in_and_a_file_of_its_own(api, tmp_path):
+    """A file whose owner allows printing only is not signed with its open password, one that allows filling in
+    is signed only in its own empty signature field (a new one changes the form), and the signed copy never
+    takes the place of the open file, which would lose its own signature."""
+    ident = ok(call(api, "id_create", name="Bo Andre", password="pw5678"))["id"]
+    doc = make_doc(1)
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_SIGNATURE, "potpis", pymupdf.Rect(50, 400, 250, 450)
+    doc[0].add_widget(w)
+    for allowed, field, error in ((["print"], None, "NOT_ALLOWED"), (["print"], "potpis", "NOT_ALLOWED"),
+                                  (["print", "form"], None, "NOT_ALLOWED"), (["print", "form"], "potpis", None)):
+        path = str(tmp_path / "policy.pdf")
+        pt.save_pdf(doc, path, user_pw="open1", owner_pw="owner1", allowed=allowed)
+        ok(call(api, "open_path", path=path, password="open1"))
+        answers(api, str(tmp_path / f"signed-{len(allowed)}-{field}.pdf"))
+        assert call(api, "sign_digital", id=ident, password="pw5678", field=field).get("error") == error, (allowed, field)
+    f = _signed_file(tmp_path, "contract.pdf")
+    ok(call(api, "open_path", path=f))
+    answers(api, f)
+    assert call(api, "sign_digital", id=ident, password="pw5678")["error"] == "OPEN_FILE"
+    assert _statuses(f) == ["valid"]
 
 
 def test_keep_protection_asks_only_for_the_open_password(api, tmp_path):
@@ -712,13 +906,27 @@ def test_dialog_filters_pass_the_pywebview_check(api, lang, monkeypatch):
 # --- HTTP server ----------------------------------------------------------------------------------
 
 
+LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # a system proxy would get 127.0.0.1 too
+
+
 def http(url, data=None, headers=None, method=None):
     req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with LOCAL.open(req, timeout=10) as r:
             return r.status, r.read(), dict(r.headers)
     except urllib.error.HTTPError as e:
         return e.code, e.read(), dict(e.headers)
+
+
+def test_the_install_check_reaches_the_app_past_a_proxy(monkeypatch):
+    """1_INSTALLER.bat ends with this check; a proxy in the Windows settings got 127.0.0.1 too and failed it."""
+    from core import selftest
+
+    for name in ("HTTP_PROXY", "http_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")  # nothing answers there
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    assert "127.0.0.1" in selftest.check_server()
 
 
 def test_theme_setting_and_title_bar(api, tmp_path, monkeypatch):
@@ -783,6 +991,25 @@ def test_shortcuts_and_pdf_handler_carry_the_window_app_id():
     assert "$k.SetValue('AppUserModelID', $appId)" in script
 
 
+def test_a_page_that_cannot_be_drawn_is_logged(api, tmp_path, monkeypatch, caplog):
+    """Under pythonw the log is the only trace of a failed request; an aborted image load stays out of it."""
+    opened(api, tmp_path)
+
+    def broken(page, width):
+        raise RuntimeError("cannot draw this page")
+
+    monkeypatch.setattr(pt, "render_pixmap", broken)
+    srv = AppServer(api, api.s, WEB_DIR).start()
+    try:
+        http(srv.url + f"page/{api.s.revs[0]}/800.jpg")
+    except Exception:  # the connection closes without an answer
+        pass
+    finally:
+        srv.stop()
+    assert any("cannot draw this page" in r.getMessage() + str(r.exc_info) and r.levelname == "ERROR"
+               for r in caplog.records)
+
+
 def test_http_server(tmp_path):
     session = Session()
     api = Api(session, Dialogs(), test_mode=False)
@@ -813,14 +1040,14 @@ def test_http_server(tmp_path):
         # a request for another host name is refused (DNS rebinding)
         req = urllib.request.Request(base, headers={"Host": "evil.example"})
         with pytest.raises(urllib.error.HTTPError):
-            urllib.request.urlopen(req, timeout=5)
+            LOCAL.open(req, timeout=5)
     finally:
         srv.stop()
         session.close()
 
 
 def test_selftest_passes(tmp_path, monkeypatch):
-    """The installation check used by install.bat runs clean on a working setup."""
+    """The installation check 1_INSTALLER.bat ends with runs clean on a working setup."""
     from core import selftest
 
     monkeypatch.setenv("AURORA_DATA_DIR", str(tmp_path))

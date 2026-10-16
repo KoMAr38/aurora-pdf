@@ -353,13 +353,13 @@
   }
   const pct = (r, info) =>
     `left:${(r[0] / info.w) * 100}%;top:${(r[1] / info.h) * 100}%;width:${((r[2] - r[0]) / info.w) * 100}%;height:${((r[3] - r[1]) / info.h) * 100}%`;
-  A.pct = pct;
 
   /* ---------- form fields ---------- */
   A.renderFields = (pg) => {
     const fx = pg.fx, info = pg.info;
     if (!fx || !info) return;
-    if (fx.contains(document.activeElement)) { pg.fieldsStale = true; return; }
+    const focused = fx.contains(document.activeElement) ? document.activeElement : null;
+    if (focused && focused.tagName !== "BUTTON") { pg.fieldsStale = true; return; } // a box holds nothing typed
     pg.fieldsStale = false;
     fx.textContent = "";
     const editable = A.can("form");
@@ -380,12 +380,12 @@
         el.innerHTML = A.icon("check", 14);
         el.onclick = () => {
           if (f.ro || !editable) return;
-          const v = f.k === "radio" ? true : !f.v;
+          const v = f.k === "radio" ? true : !el.classList.contains("on");
           setField(pg, f, v);
           // the layer is not rebuilt while one of its fields has focus, and this button keeps
-          // the focus after the click, so show the new state here; the next rebuild uses the file
+          // the focus after the click, so show the new state here; the next rebuild uses the file.
+          // f stays as it is: it belongs to the page revision, which undo brings back
           if (f.k === "radio") fx.querySelectorAll(".chk.radio").forEach((b) => { if (b.title === f.n) b.classList.remove("on"); });
-          f.v = v;
           el.classList.toggle("on", v);
         };
       } else if (f.k === "combo" || f.k === "list") {
@@ -400,6 +400,8 @@
           if (chosen.includes(value)) op.selected = true;
           el.appendChild(op);
         });
+        // nothing chosen: a dropdown would show its first option, which the file does not hold
+        if (!el.multiple && !(f.opts || []).some(([value]) => chosen.includes(value))) el.selectedIndex = -1;
         el.addEventListener("change", () => setField(pg, f, el.multiple ? [...el.selectedOptions].map((o) => o.value) : el.value));
       } else if (f.k === "signature") {
         if (f.signed) return; // the page image shows the signature itself
@@ -409,16 +411,18 @@
         el.onclick = () => A.startDigitalSign({ page: +pg.el.dataset.i, rect: f.r, field: f.n });
       } else return;
       el.classList.add("fld");
+      el.dataset.x = f.x;
       el.title = f.n;
       el.style.cssText = pct(rect, info) + `;font-size:calc(var(--s) * ${fsz.toFixed(2)}px)`;
-      if ((f.ro || !editable) && el.tagName !== "BUTTON") el.disabled = true;
+      if ((f.ro || !editable) && !el.classList.contains("sigfield")) el.disabled = true;
       el.addEventListener("blur", () => { if (pg.fieldsStale) setTimeout(() => A.renderFields(pg), 0); });
       fx.appendChild(el);
     });
+    if (focused) { const again = fx.querySelector(`[data-x="${focused.dataset.x}"]`); if (again) again.focus(); } // the keyboard stays on the box
   };
   function setField(pg, f, value) {
-    const i = +pg.el.dataset.i;
-    A.edit("field_set", () => ({ page: i, rev: V.pages[i].rev, xref: f.x, value }), { noBusy: true });
+    const at = A.pageRef(+pg.el.dataset.i);
+    A.edit("field_set", () => ({ ...at(), xref: f.x, value }), { noBusy: true });
   }
 
   /* ---------- reacting to the backend ---------- */
@@ -463,8 +467,6 @@
     }).observe(V.viewer);
   };
   A.refreshVisible = () => scheduleUpdate(true);
-  A.pageEl = (i) => (V.pages[i] ? V.pages[i].el : null);
-  A.PX = PX;
   A.scale = scale;
   A.LO = LO;
 })(window.Aurora);

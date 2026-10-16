@@ -18,32 +18,33 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @contextmanager
 def app_server(data_dir: str | None = None, extra_args: list[str] | None = None):
-    """Start the app in test mode; yields (url, data_dir)."""
-    data_dir = data_dir or tempfile.mkdtemp(prefix="aurora_e2e_")
-    port_file = os.path.join(data_dir, "url.txt")
-    env = dict(os.environ, AURORA_DATA_DIR=data_dir, PYTHONUNBUFFERED="1")
-    proc = subprocess.Popen([sys.executable, str(ROOT / "main.py"), "--serve", port_file, *(extra_args or [])],
-                            cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    try:
-        deadline = time.time() + 20
-        url = ""
-        while time.time() < deadline:
-            if os.path.exists(port_file):
-                url = Path(port_file).read_text(encoding="utf-8").strip()
-                if url:
-                    break
-            if proc.poll() is not None:
-                raise RuntimeError("server exited: " + proc.stdout.read().decode(errors="replace"))
-            time.sleep(0.05)
-        if not url:
-            raise RuntimeError("server did not start")
-        yield url, data_dir
-    finally:
-        proc.terminate()
+    """Start the app in test mode; yields (url, data_dir). A data folder of its own goes when it stops."""
+    with tempfile.TemporaryDirectory(prefix="aurora_e2e_", ignore_cleanup_errors=True) as own:
+        data_dir = data_dir or own
+        port_file = os.path.join(data_dir, "url.txt")
+        env = dict(os.environ, AURORA_DATA_DIR=data_dir, PYTHONUNBUFFERED="1")
+        proc = subprocess.Popen([sys.executable, str(ROOT / "main.py"), "--serve", port_file, *(extra_args or [])],
+                                cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
-            proc.wait(5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            deadline = time.time() + 20
+            url = ""
+            while time.time() < deadline:
+                if os.path.exists(port_file):
+                    url = Path(port_file).read_text(encoding="utf-8").strip()
+                    if url:
+                        break
+                if proc.poll() is not None:
+                    raise RuntimeError("server exited: " + proc.stdout.read().decode(errors="replace"))
+                time.sleep(0.05)
+            if not url:
+                raise RuntimeError("server did not start")
+            yield url, data_dir
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 def launch_browser(pw):

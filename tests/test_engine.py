@@ -4,6 +4,7 @@ Rotated pages are checked in display space (what the user sees), because that is
 the v1 engine went wrong. Run: python -m pytest tests
 """
 import os
+import time
 
 import pymupdf
 import pytest
@@ -25,6 +26,9 @@ def test_parse_page_range():
     assert pt.parse_page_range("2", 3) == [1]
     with pytest.raises(ValueError):
         pt.parse_page_range("99", 3)
+    t0 = time.perf_counter()
+    assert pt.parse_page_range("0-1, 2-30000000", 3) == [0, 1, 2]  # a typo must not count to 30 million
+    assert time.perf_counter() - t0 < 0.5
 
 
 def test_permissions_roundtrip():
@@ -146,6 +150,12 @@ def test_header_footer_date_follows_the_ui():
     assert "Dato 13.10.2026" in doc[0].get_text()
 
 
+def test_header_footer_keeps_other_braces():
+    doc = make_doc(2)
+    pt.add_header_footer(doc, text="{Fortrolig} side {n} av {total}")
+    assert "{Fortrolig} side 2 av 2" in doc[1].get_text()
+
+
 @pytest.mark.parametrize("rot", (0, 90))
 def test_watermark_image_upright(rot):
     doc = make_doc(1, rotation=rot)
@@ -190,6 +200,12 @@ def test_rotate_delete_reorder_insert_duplicate(tmp_path):
     assert pt.insert_images(doc, [img, img], len(doc)) == 2 and len(doc) == 8
 
 
+def test_duplicate_several_pages_and_the_last():
+    doc = make_doc(3)
+    assert pt.duplicate_pages(doc, [2, 0]) == [1, 4]
+    assert [p.get_text().split()[3] for p in doc] == ["1", "1", "2", "3", "3"]
+
+
 @pytest.mark.parametrize("rot", (0, 90))
 def test_crop_twice(rot):
     doc = make_doc(1, rotation=rot)
@@ -203,6 +219,35 @@ def test_crop_twice(rot):
     assert abs(page.rect.width - w * 0.4) < 1 and abs(page.rect.height - h * 0.25) < 1
     pt.uncrop_pages(doc, [0])
     assert abs(doc[0].rect.width - w) < 1
+
+
+@pytest.mark.parametrize("rot", (0, 90, 180, 270))
+@pytest.mark.parametrize("box", ("cropped", "crop past the media box", "user unit 2"))
+def test_points_land_in_place_on_a_cropped_turned_page(rot, box):
+    """A signature box and a moved drawing go where the user put them: PyMuPDF's page matrix leaves out the
+    CropBox offset of a turned page, which put a signature off the page. A CropBox reaching past the MediaBox
+    (MuPDF clips it) and /UserUnit (MuPDF scales the page) moved them too."""
+    from core import signing
+
+    doc = make_doc(1)
+    if box == "cropped":
+        pt.crop_pages(doc, [0], (0.1, 0.2, 0.9, 0.9))
+    else:
+        doc.xref_set_key(doc[0].xref, *(("CropBox", "[100 100 900 900]") if box.startswith("crop") else ("UserUnit", "2")))
+    page = doc.reload_page(doc[0])
+    page.set_rotation(rot)
+    x0, y0, x1, y1 = signing.box_from_display(page, (40, 40, 120, 80))
+    blue = doc.get_new_xref()  # drawn in PDF user space, where the signature goes
+    doc.update_object(blue, "<<>>")
+    doc.update_stream(blue, f"q 0 0 1 rg {x0} {y0} {x1 - x0} {y1 - y0} re f Q".encode())
+    doc.xref_set_key(page.xref, "Contents", f"[{page.get_contents()[0]} 0 R {blue} 0 R]")
+    pix = page.get_pixmap(dpi=72)
+    assert pix.pixel(80, 60)[:3] == (0, 0, 255) and pix.pixel(150, 60)[:3] != (0, 0, 255)
+    xref = an.add_ink(page, [[(60, 100), (100, 130)]])
+    before = {a["x"]: a["r"] for a in an.page_annots(page)}[xref]
+    an.move_annot(page, xref, 10, 0)
+    after = {a["x"]: a["r"] for a in an.page_annots(page)}[xref]
+    assert abs(after[0] - before[0] - 10) < 1 and abs(after[1] - before[1]) < 1
 
 
 def test_merge_extract_split_images(tmp_path):
@@ -318,8 +363,12 @@ def test_compress_shrinks_big_images(tmp_path):
     plain = os.path.join(tmp_path, "plain.pdf")
     pt.save_pdf(doc, plain)
     small = os.path.join(tmp_path, "small.pdf")
-    size = pt.compress_to(doc, small, image_dpi=100, quality=60)
-    assert size < os.path.getsize(plain) * 0.7
+    before, size = pt.compress_to(doc, small, image_dpi=100, quality=60)
+    assert size < os.path.getsize(plain) * 0.7 < before
+    stopped = os.path.join(tmp_path, "stopped.pdf")
+    with pytest.raises(pt.Cancelled):  # Cancel: no file
+        pt.compress_to(doc, stopped, progress=lambda done, total: False)
+    assert not os.path.exists(stopped)
 
 
 def test_docx_export(tmp_path):
@@ -903,6 +952,67 @@ def test_redaction_removes_comments_fields_and_links_under_the_mark(tmp_path):
     again = pymupdf.open(out)
     assert b"12345678901" not in again.tobytes(garbage=1, deflate=False, expand=255)
     assert [a.info["content"] for a in again[0].annots()] == ["langt unna"]
+
+
+def test_redaction_wipes_the_picture_under_the_mark(tmp_path):
+    """Black on top is not enough: the picture's own pixels under the mark go, else any tool takes them out."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_image((100, 100, 300, 300), stream=png_bytes(200, 200, (220, 30, 30, 255), mark=False))
+    an.mark_redaction(page, (100, 100, 200, 300))  # the left half
+    an.apply_redactions(doc)
+    out = str(tmp_path / "r.pdf")
+    pt.save_pdf(doc, out)
+    saved = pymupdf.open(out)
+    pix = pymupdf.Pixmap(saved, saved[0].get_images()[0][0])
+    assert pix.pixel(30, 100)[:3] != (220, 30, 30) and pix.pixel(170, 100)[:3] == (220, 30, 30)
+
+
+def test_redaction_takes_a_fields_value_with_its_last_widget(tmp_path):
+    """A field's value sits in its parent object, which outlives the widgets, and a hybrid form keeps it again
+    in its XFA packet: the value goes with the field's last widget, the packet with the first mark."""
+    doc, af, x = _form_made_elsewhere()  # "reka" holds Морава, with a widget on page 1 and one on page 2
+    xfa = doc.get_new_xref()
+    doc.update_object(xfa, "<<>>")
+    doc.update_stream(xfa, "<xfa:datasets><reka>Морава</reka></xfa:datasets>".encode())
+    doc.xref_set_key(af, "XFA", f"{xfa} 0 R")
+    reka = (45, 535, 305, 570)
+    an.mark_redaction(doc[0], reka)
+    assert an.apply_redactions(doc) == 1
+    assert doc.xref_get_key(af, "XFA") == ("null", "null")
+    assert {f["n"]: f["v"] for f in an.page_fields(doc[1])}["reka"] == "Морава"  # its other widget keeps it
+    an.mark_redaction(doc[1], reka)
+    assert an.apply_redactions(doc) == 1
+    out = str(tmp_path / "redacted.pdf")
+    pt.save_pdf(doc, out)
+    saved = pymupdf.open(out)
+    texts = [saved.xref_get_key(o, k)[1] for o in range(1, saved.xref_length()) for k in saved.xref_get_keys(o)]
+    assert not [t for t in texts if "Морава" in t]
+    assert b"041C043E0440043004320430" not in saved.tobytes(garbage=1, deflate=False, expand=255).upper()
+
+
+def test_redaction_takes_a_radio_choice_with_its_button():
+    """The group's value names the chosen button. With that button redacted, the other one shows Off and the
+    value would still say which was chosen."""
+    doc = make_doc(1)
+    page = doc[0]
+    group, kids, faces = doc.get_new_xref(), (doc.get_new_xref(), doc.get_new_xref()), []
+    for draw in ("q 0 g 4 4 8 8 re f Q", ""):
+        faces.append(doc.get_new_xref())
+        doc.update_object(faces[-1], "<</Type/XObject/Subtype/Form/BBox[0 0 16 16]>>")
+        doc.update_stream(faces[-1], draw.encode())
+    doc.update_object(group, f"<</FT/Btn/Ff 49152/T(hiv)/V/positive/DV/positive/Kids[{kids[0]} 0 R {kids[1]} 0 R]>>")
+    for kid, state, y in zip(kids, ("positive", "negative"), (100, 140)):
+        doc.update_object(kid, f"<</Type/Annot/Subtype/Widget/Rect[50 {y} 66 {y + 16}]/Parent {group} 0 R/F 4"
+                               f"/P {page.xref} 0 R/AS/{'positive' if state == 'positive' else 'Off'}"
+                               f"/AP<</N<</{state} {faces[0]} 0 R/Off {faces[1]} 0 R>>>>>>")
+    doc.xref_set_key(page.xref, "Annots", f"[{kids[0]} 0 R {kids[1]} 0 R]")
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm", f"<</Fields[{group} 0 R]>>")
+    page = doc.reload_page(page)
+    an.mark_redaction(page, (45, 595 - 120, 75, 595 - 95))  # the "positive" button only
+    assert an.apply_redactions(doc) == 1
+    assert [doc.xref_get_key(group, k)[0] for k in ("V", "DV")] == ["null", "null"]
+    assert doc.xref_get_key(group, "T") == ("string", "hiv")  # the group and its other button stay
 
 
 def test_doc_annots_lists_pages():

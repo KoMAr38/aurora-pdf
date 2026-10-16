@@ -66,11 +66,9 @@ window.Aurora = window.Aurora || {};
     ["e_INVALID", "Ovo nije uspelo:", "That did not work:", "Det gikk ikke:"],
     ["e_NETWORK", "Izgubljena veza sa programom. Pokreni Aurora PDF ponovo.", "Lost contact with the engine. Restart Aurora PDF.", "Mistet kontakten med motoren. Start Aurora PDF på nytt."],
     ["e_NOT_FOUND", "Nije pronađeno.", "Not found.", "Fant det ikke."],
-    ["e_CANCELLED", "Otkazano.", "Cancelled.", "Avbrutt."],
     ["e_FILE_NOT_FOUND", "Fajl više ne postoji na tom mestu.", "The file is no longer there.", "Filen finnes ikke lenger der."],
     ["e_FILE_LOCKED", "Fajl je otvoren u drugom programu. Zatvori ga tamo i pokušaj ponovo.", "The file is open in another program. Close it there and try again.", "Filen er åpen i et annet program. Lukk den der og prøv igjen."],
     ["e_BAD_PAGES", "Proveri strane, npr. 1-3, 5.", "Check the pages, e.g. 1-3, 5.", "Sjekk sidene, f.eks. 1-3, 5."],
-    ["e_STALE", "Dokument se u međuvremenu promenio, prikaz je osvežen.", "The document changed in the meantime; the view is refreshed.", "Dokumentet ble endret i mellomtiden; visningen er oppdatert."],
     ["e_NEED_PASSWORD", "Ovaj fajl traži lozinku.", "This file needs a password.", "Filen krever passord."],
     ["e_WRONG_PASSWORD", "Pogrešna lozinka.", "Wrong password.", "Feil passord."],
     ["e_NOT_ALLOWED", "Dozvole ovog dokumenta to ne dopuštaju.", "This document's permissions don't allow that.", "Tillatelsene i dokumentet tillater ikke det."],
@@ -88,6 +86,8 @@ window.Aurora = window.Aurora || {};
     ["e_EMPTY_SIGNATURE", "Potpis je prazan.", "The signature is empty.", "Signaturen er tom."],
     ["e_SOURCE_PROTECTED", "Zaštićen fajl može da doda samo vlasnik, uz lozinku vlasnika.", "Only the owner can add a protected file, with the owner password.", "Bare eieren kan legge til en beskyttet fil, med eierpassordet."],
     ["e_OPEN_FILE", "Taj fajl je sad otvoren ovde. Izaberi drugo ime.", "That file is open here right now. Pick another name.", "Den filen er åpen her nå. Velg et annet navn."],
+    ["e_FILE_CHANGED", "Drugi program je u međuvremenu izmenio ovaj fajl. Sačuvaj kao novi fajl, da nijedna verzija ne propadne.", "Another program changed this file in the meantime. Save as a new file, so neither version is lost.", "Et annet program har endret filen i mellomtiden. Lagre som en ny fil, så ingen av versjonene går tapt."],
+    ["e_SAVE_FIRST", "Otvoreni fajl ima nesačuvane izmene. Prvo ga sačuvaj, pa spoji.", "The open file has unsaved changes. Save it first, then combine.", "Den åpne filen har ulagrede endringer. Lagre den først, og slå sammen etterpå."],
 
     /* ---- undo labels ---- */
     ["op_rotate", "rotacija", "rotate", "rotering"],
@@ -107,7 +107,6 @@ window.Aurora = window.Aurora || {};
     ["op_highlight", "isticanje", "highlight", "utheving"],
     ["op_underline", "podvlačenje", "underline", "understreking"],
     ["op_strikeout", "precrtavanje", "strikeout", "gjennomstreking"],
-    ["op_squiggly", "talasasto podvlačenje", "squiggly underline", "bølgete understreking"],
     ["op_text", "tekst", "text box", "tekstboks"],
     ["op_note", "beleška", "note", "notat"],
     ["op_image", "potpis", "signature", "signatur"],
@@ -187,6 +186,9 @@ window.Aurora = window.Aurora || {};
     ["unsavedTitle", "Nesačuvane izmene", "Unsaved changes", "Ulagrede endringer"],
     ["unsavedMsg", "Sačuvati izmene u fajlu {name}?", "Save the changes to {name}?", "Lagre endringene i {name}?"],
     ["unsavedCloseMsg", "{name} ima nesačuvane izmene. Sačuvati pre zatvaranja?", "{name} has unsaved changes. Save before closing?", "{name} har ulagrede endringer. Lagre før du lukker?"],
+    ["jobRunningTitle", "Posao još traje", "A task is still running", "En jobb pågår fortsatt"],
+    ["jobRunningCloseMsg", "Zatvaranje prekida posao koji je u toku (OCR ili izvoz).", "Closing stops the task in progress (OCR or export).", "Lukking stopper jobben som pågår (OCR eller eksport)."],
+    ["closeAnyway", "Zatvori svejedno", "Close anyway", "Lukk likevel"],
     ["dontSave", "Ne čuvaj", "Don't save", "Ikke lagre"],
     ["needPw", "Potrebna je lozinka", "Password required", "Passord kreves"],
     ["needPwSub", "{name} je zaštićen. Unesi lozinku da ga otvoriš.", "{name} is protected. Enter the password to open it.", "{name} er beskyttet. Skriv inn passordet for å åpne den."],
@@ -197,6 +199,7 @@ window.Aurora = window.Aurora || {};
     ["notOwnerPw", "Ta lozinka otvara fajl, ali za ovo treba lozinka vlasnika.", "That password opens the file, but this takes the owner password.", "Det passordet åpner filen, men dette krever eierpassordet."],
     ["unlock", "Otključaj", "Unlock", "Lås opp"],
     ["restrictedToast", "Otvoreno sa ograničenim pravima: autor je zabranio izmene.", "Opened with limited rights: the author restricted editing.", "Åpnet med begrensede rettigheter: forfatteren har sperret redigering."],
+    ["xfaBanner", "Ovo je XFA obrazac: Aurora PDF ne može da ga prikaže ni popuni. Otvori ga u Adobe Acrobat Readeru.", "This is an XFA form: Aurora PDF can't show it or fill it in. Open it in Adobe Acrobat Reader.", "Dette er et XFA-skjema: Aurora PDF kan ikke vise det eller fylle det ut. Åpne det i Adobe Acrobat Reader."],
     ["scannedBanner", "Ovo liči na skeniran dokument. Prepoznaj tekst da bi mogao da ga pretražuješ i kopiraš.", "This looks like a scanned document. Recognize the text to search and copy it.", "Dette ser ut som et skannet dokument. Gjenkjenn teksten for å kunne søke i og kopiere den."],
     ["signedSaveTitle", "Potpisan dokument", "Signed document", "Signert dokument"],
     ["signedSaveMsg", "Ako sačuvaš izmene posle potpisivanja, postojeći potpisi više neće važiti. Ipak sačuvati?", "Saving changes after signing invalidates the existing signatures. Save anyway?", "Lagrer du endringer etter signering, blir signaturene ugyldige. Lagre likevel?"],
@@ -366,6 +369,10 @@ window.Aurora = window.Aurora || {};
     ["sig_untrusted", "Netaknut, ali identitet potpisnika nije potvrđen", "Intact, but the signer's identity isn't verified", "Uendret, men identiteten til den som signerte er ikke bekreftet"],
     ["sig_modified", "Dokument je menjan posle potpisa", "The document changed after signing", "Dokumentet er endret etter signering"],
     ["sig_invalid", "Neispravan potpis", "Invalid signature", "Ugyldig signatur"],
+    ["ts_valid", "Ispravan vremenski žig", "Valid timestamp", "Gyldig tidsstempel"],
+    ["ts_untrusted", "Netaknut vremenski žig, ali njegov izdavač nije potvrđen", "Intact timestamp, but its issuer isn't verified", "Uendret tidsstempel, men utstederen er ikke bekreftet"],
+    ["ts_modified", "Dokument je menjan posle vremenskog žiga", "The document changed after the timestamp", "Dokumentet er endret etter tidsstempelet"],
+    ["ts_invalid", "Neispravan vremenski žig", "Invalid timestamp", "Ugyldig tidsstempel"],
     ["issuedBy", "Izdao: {who}", "Issued by {who}", "Utstedt av {who}"],
     ["sigCheckSaved", "Provereno na sačuvanom fajlu; nesačuvane izmene nisu uključene.", "Checked against the saved file; unsaved edits aren't included.", "Kontrollert mot den lagrede filen; ulagrede endringer er ikke med."],
 
@@ -579,7 +586,6 @@ window.Aurora = window.Aurora || {};
 
   const I = (A.I18N = { sr: {}, en: {}, no: {} });
   ROWS.forEach(([k, sr, en, no]) => { I.sr[k] = sr; I.en[k] = en; I.no[k] = no; });
-  A.I18N_KEYS = ROWS.map((r) => r[0]);
 
   /* plural form of a counted word: stem + One / Few / Many */
   A.plural = (n, stem) => {

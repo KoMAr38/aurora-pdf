@@ -48,7 +48,6 @@
     renderStart();
     renderFileInfo();
     renderVbar();
-    A.emit("lang");
   }
 
   /* ---------- opening files ---------- */
@@ -68,7 +67,6 @@
     if (v === "save") return !!(await A.save());
     return false;
   }
-  A.guardUnsaved = guardUnsaved;
 
   async function handleOpen(r) {
     if (!r) return null;
@@ -114,7 +112,8 @@
     S.search = { q: "", hits: [], cur: -1 };
     $("#search").value = "";
     renderSearchCount();
-    if (S.doc && S.doc.scanned) {
+    if (S.doc && S.doc.xfa) A.showBanner(A.t("xfaBanner"), null);
+    else if (S.doc && S.doc.scanned) {
       A.showBanner(A.t("scannedBanner"), null, { label: A.t("ocrRun"), run: () => { A.hideBanner(); A.openPanel("ocr"); } });
     } else A.hideBanner();
     if (S.doc && S.doc.protected && !S.doc.owner && !S.doc.rights.modify) A.toast(A.t("restrictedToast"), "info");
@@ -134,10 +133,10 @@
     if (!S.doc) return null;
     await A.commitPending();
     if (S.doc.signed && S.doc.dirty && !(await A.confirm(A.t("signedSaveTitle"), A.t("signedSaveMsg"), A.t("saveAnyway")))) return null;
-    const r = await A.call("save", {}, { raw: true, handle: (e) => ["NEED_PATH", "SAVE_AS_COPY", "NEED_PASSWORDS"].includes(e.error) });
+    const r = await A.call("save", {}, { raw: true, handle: (e) => ["NEED_PATH", "SAVE_AS_COPY", "FILE_CHANGED", "NEED_PASSWORDS"].includes(e.error) });
     if (!r || r.ok === false) {
       if (r && r.error === "NEED_PATH") return A.saveAs();
-      if (r && r.error === "SAVE_AS_COPY") { A.toast(A.t("e_SAVE_AS_COPY"), "info"); return A.saveAs(); }
+      if (r && (r.error === "SAVE_AS_COPY" || r.error === "FILE_CHANGED")) { A.toast(A.t("e_" + r.error), "info"); return A.saveAs(); }
       if (r && r.error === "NEED_PASSWORDS") return needPasswords(A.save);
       return null;
     }
@@ -217,7 +216,7 @@
   };
   function parseRange(spec, total) {
     spec = String(spec || "").trim().toLowerCase();
-    if (!spec || spec === "all") return [...Array(total).keys()];
+    if (!spec || ["all", "*", "sve", "alle"].includes(spec)) return [...Array(total).keys()]; // as the backend reads it
     const out = new Set();
     spec.split(/[,;]/).forEach((part) => {
       part = part.trim();
@@ -225,7 +224,7 @@
       const m = /^(\d*)\s*-\s*(\d*)$/.exec(part);
       const [a, b] = m ? [m[1] ? +m[1] : 1, m[2] ? +m[2] : total] : [+part, +part];
       if (isNaN(a) || isNaN(b)) throw new Error("bad");
-      for (let k = a; k <= b; k++) if (k >= 1 && k <= total) out.add(k - 1);
+      for (let k = Math.max(a, 1); k <= Math.min(b, total); k++) out.add(k - 1);
     });
     if (!out.size) throw new Error("empty");
     return [...out].sort((x, y) => x - y);
@@ -429,7 +428,6 @@
     });
   }
   A.on("current", (i) => { const inp = $("#pageIn"); if (inp && document.activeElement !== inp) inp.value = i + 1; });
-  A.on("zoom", () => { const z = $("#zoomVal"); if (z) z.textContent = `${Math.round(S.zoom * 100)}%`; A.$$("#vbar [data-fit]").forEach((b) => b.classList.toggle("active", S.fit === b.dataset.fit)); });
 
   /* ---------- start screen ---------- */
   function renderStart() {
@@ -509,6 +507,16 @@
     (async () => {
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); // a typed field commits on blur
       await A.commitPending();
+      let st = await A.rpc("state").catch(() => null);
+      if (st && st.jobs && st.jobs.length) { // OCR or an export: stop it first, so what it did can still be saved
+        if (!(await A.confirm(A.t("jobRunningTitle"), A.t("jobRunningCloseMsg"), A.t("closeAnyway"), true))) return;
+        for (const j of st.jobs) await A.rpc("job_cancel", { id: j.id }).catch(() => null);
+        for (let k = 0; k < 150 && st && st.jobs && st.jobs.length; k++) {
+          await new Promise((r) => setTimeout(r, 100));
+          st = await A.rpc("state").catch(() => null);
+        }
+        if (st) A.applyDoc(st.doc);
+      }
       if (!S.doc || !S.doc.dirty) return A.rpc("quit");
       const v = await A.modal({
         title: A.t("unsavedTitle"),
@@ -614,6 +622,7 @@
     let st = null;
     try { st = await A.rpc("state"); } catch (e) { /* server not reachable: shown below */ }
     if (!st || !st.ok) {
+      applyTheme(); // else light text on the light window of a light Windows
       document.body.innerHTML = `<div class="fatal">${A.icon("warn", 28)}<p>Aurora PDF backend is not reachable.</p></div>`;
       return;
     }

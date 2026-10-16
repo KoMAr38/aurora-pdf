@@ -27,6 +27,7 @@ class Job:
         self.error = ""
         self.cancel_requested = False
         self.started = time.time()
+        self.thread: threading.Thread | None = None
 
     def progress(self, done: int, total: int) -> bool:
         self.done, self.total = int(done), int(total)
@@ -45,12 +46,6 @@ class Jobs:
 
     def start(self, kind: str, fn) -> str:
         job = Job(f"j{next(self._ids)}", kind)
-        with self._lock:
-            self._jobs[job.id] = job
-            # keep the registry small: forget finished jobs older than 10 minutes
-            old = [k for k, j in self._jobs.items() if j.state != "running" and time.time() - j.started > 600]
-            for k in old:
-                del self._jobs[k]
 
         def run():
             try:
@@ -63,7 +58,14 @@ class Jobs:
                 job.state = "error"
                 job.error = str(exc) or type(exc).__name__
 
-        threading.Thread(target=run, name=f"job-{kind}", daemon=True).start()
+        job.thread = threading.Thread(target=run, name=f"job-{kind}", daemon=True)
+        with self._lock:  # a job in the registry has its thread running
+            self._jobs[job.id] = job
+            # keep the registry small: forget finished jobs older than 10 minutes
+            old = [k for k, j in self._jobs.items() if j.state != "running" and time.time() - j.started > 600]
+            for k in old:
+                del self._jobs[k]
+            job.thread.start()
         return job.id
 
     def status(self, ident: str) -> dict:
@@ -76,4 +78,16 @@ class Jobs:
             job.cancel_requested = True
 
     def running(self) -> list[dict]:
-        return [j.as_dict() for j in self._jobs.values() if j.state == "running"]
+        with self._lock:
+            return [j.as_dict() for j in self._jobs.values() if j.state == "running"]
+
+    def stop_all(self, timeout: float = 10.0) -> None:
+        """Cancel every running job and give them ``timeout`` seconds to end: the program is closing, and a job
+        cleans up after itself (the Word export's decrypted copy in the temp folder) on its way out."""
+        with self._lock:
+            running = [j for j in self._jobs.values() if j.state == "running"]
+        for j in running:
+            j.cancel_requested = True
+        end = time.monotonic() + timeout
+        for j in running:
+            j.thread.join(max(0.0, end - time.monotonic()))

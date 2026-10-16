@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import secrets
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -74,8 +75,11 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def handle_error(self, request, client_address):  # aborted image loads are normal while scrolling
-        log.debug("request error from %s", client_address, exc_info=True)
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], ConnectionError):  # aborted image loads are normal while scrolling
+            log.debug("connection closed by %s", client_address)
+        else:  # a page that cannot be drawn, a bug: the log is the only trace under pythonw
+            log.exception("request from %s failed", client_address)
 
 
 class AppServer:

@@ -24,9 +24,9 @@ from core.session import Session
 APP_ID = "Aurora.PDF.Desktop"
 VERSION = "2.0.0"
 UNSAVED = {  # native fallback when the page cannot ask itself
-    "sr": "Imate nesačuvane izmene. Zatvoriti bez čuvanja?",
-    "en": "You have unsaved changes. Close without saving?",
-    "no": "Du har endringer som ikke er lagret. Lukke uten å lagre?",
+    "sr": "Ima nesačuvanih izmena ili posao još traje. Zatvoriti svejedno?",
+    "en": "There are unsaved changes, or a task is still running. Close anyway?",
+    "no": "Det finnes ulagrede endringer, eller en jobb pågår fortsatt. Lukke likevel?",
 }
 
 
@@ -37,6 +37,16 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.addHandler(handler)
     root.setLevel(logging.INFO)
+    log = logging.getLogger("aurora")
+
+    # pythonw has no console: what nothing else catches (a window that cannot start) goes to the log
+    def uncaught(kind, exc, tb, where="main"):
+        log.critical("uncaught error in %s", where, exc_info=(kind, exc, tb))
+        sys.__excepthook__(kind, exc, tb)  # and to the console, when there is one (START_MED_KONSOLL.bat)
+
+    sys.excepthook = uncaught
+    threading.excepthook = lambda a: uncaught(a.exc_type, a.exc_value, a.exc_traceback,
+                                              a.thread.name if a.thread else "?")
     import pymupdf
 
     pymupdf.set_messages(pylogging=True)  # MuPDF's warnings belong in the log; pythonw has no console
@@ -108,7 +118,7 @@ def run_window(api: Api, server: AppServer) -> None:
                 handled = False
             if handled:
                 return
-            if not api.s.dirty:
+            if not api.s.dirty and not api._jobs.running():
                 really_quit()
                 return
             from core import settings
@@ -178,6 +188,7 @@ def main() -> int:
     try:
         run_window(api, server)
     finally:
+        api._jobs.stop_all()  # before the document goes: OCR works on it
         session.close()
         server.stop()
     return 0

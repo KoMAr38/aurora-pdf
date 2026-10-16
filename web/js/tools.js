@@ -93,7 +93,7 @@
       if (a) {
         sel.a = a;
         drawSelection(pg, a.r, a.rs);
-      }
+      } else if (V.infos.get(pg.rev) === info) S.selAnnot = null; // gone from the page as it is now (undo)
     }
     const gT = svgEl("g", { class: "g-tmp" });
     ov.appendChild(gT);
@@ -289,9 +289,9 @@
   const round = (v) => Math.round(v * 100) / 100;
   const range = (a, b) => { const out = []; for (let k = Math.min(a, b); k <= Math.max(a, b); k++) out.push(k); return out; };
 
-  function commit(i, pvs, payload) {
-    return A.edit("annot_add", () => Object.assign({ page: i, rev: V.pages[i].rev }, payload), { noBusy: true })
-      .then((r) => { settlePreviews(i, pvs, !!r); return r; });
+  function commit(i, pvs, payload, at = A.pageRef(i)) {
+    return A.edit("annot_add", () => Object.assign(at(), payload), { noBusy: true })
+      .then((r) => { settlePreviews(at().page, pvs, !!r); return r; });
   }
 
   /* ---------- markup ---------- */
@@ -312,7 +312,7 @@
   let ink = null, inkTimer = null;
   function inkAdd(i, pts, pv) {
     if (ink && ink.page !== i) flushInk();
-    if (!ink) ink = { page: i, strokes: [], pvs: [], color: S.style.color, width: S.style.width };
+    if (!ink) ink = { page: i, at: A.pageRef(i), strokes: [], pvs: [], color: S.style.color, width: S.style.width };
     ink.strokes.push(pts);
     ink.pvs.push(pv);
     clearTimeout(inkTimer);
@@ -323,7 +323,7 @@
     if (!ink) return;
     const job = ink;
     ink = null;
-    commit(job.page, job.pvs, { kind: "ink", strokes: job.strokes, color: job.color, width: job.width });
+    commit(job.page, job.pvs, { kind: "ink", strokes: job.strokes, color: job.color, width: job.width }, job.at);
   }
   A.flushInk = flushInk;
 
@@ -358,7 +358,7 @@
 
   /* ---------- text box and notes ---------- */
   function startText(pg, p) {
-    const i = idx(pg);
+    const at = A.pageRef(idx(pg));
     const box = A.h(`<textarea class="ft-edit" rows="1"></textarea>`); // no spellcheck: WebView2 checks against the Windows language, not the text's
     const s = A.scale();
     box.style.left = `${(p.x / pg.w) * 100}%`;
@@ -380,7 +380,7 @@
       if (!save || !text) return;
       const x0 = ((r.left - pr.left) / pr.width) * pg.w, y0 = ((r.top - pr.top) / pr.height) * pg.h;
       const x1 = ((r.right - pr.left) / pr.width) * pg.w + 6, y1 = ((r.bottom - pr.top) / pr.height) * pg.h + 3;
-      A.edit("annot_add", () => ({ page: i, rev: V.pages[i].rev, kind: "text", rect: [x0, y0, x1, y1].map(round), text, size: S.style.size, color: S.style.text }));
+      A.edit("annot_add", () => ({ ...at(), kind: "text", rect: [x0, y0, x1, y1].map(round), text, size: S.style.size, color: S.style.text }));
     };
     box.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { e.stopPropagation(); finish(false); }
@@ -390,10 +390,10 @@
   }
 
   async function addNote(pg, p) {
-    const i = idx(pg);
+    const at = A.pageRef(idx(pg));
     const text = await A.prompt(A.t("noteTitle"), A.t("noteText"), "", { multiline: true, ok: A.t("add") });
     if (text == null) return;
-    A.edit("annot_add", () => ({ page: i, rev: V.pages[i].rev, kind: "note", point: [round(p.x), round(p.y)], text, color: S.style.color }));
+    A.edit("annot_add", () => ({ ...at(), kind: "note", point: [round(p.x), round(p.y)], text, color: S.style.color }));
   }
 
   /* ---------- placing images (signatures) ---------- */
@@ -432,11 +432,11 @@
     Object.entries({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 }).forEach(([k, v]) => d.node.setAttribute(k, v));
   }
   function placeImage(i, rect) {
-    const pl = S.placing;
+    const pl = S.placing, at = A.pageRef(i);
     A.setMode("select");
     clearGhost();
-    A.edit("annot_add", () => ({ page: i, rev: V.pages[i].rev, kind: "image", rect, sig: pl.id, label: A.t("signature") }))
-      .then((r) => { if (r) { A.toast(A.t("sigPlaced")); A.selectAnnot({ page: i, xref: r.xref }); } });
+    A.edit("annot_add", () => ({ ...at(), kind: "image", rect, sig: pl.id, label: A.t("signature") }))
+      .then((r) => { if (r) { A.toast(A.t("sigPlaced")); A.selectAnnot({ page: at().page, xref: r.xref }); } });
   }
 
   /* ---------- eraser ---------- */
@@ -465,10 +465,11 @@
     drag = { mode: "move", pg, start: p, a, moved: false };
   }
   function finishAnnotDrag(d, i) {
+    const at = A.pageRef(i);
     if (d.mode === "move" && d.moved) {
-      A.edit("annot_move", () => ({ page: i, rev: V.pages[i].rev, xref: d.a.x, dx: round(d.dx), dy: round(d.dy) }), { noBusy: true });
+      A.edit("annot_move", () => ({ ...at(), xref: d.a.x, dx: round(d.dx), dy: round(d.dy) }), { noBusy: true });
     } else if (d.mode === "resize" && d.rect) {
-      A.edit("annot_resize", () => ({ page: i, rev: V.pages[i].rev, xref: d.a.x, rect: d.rect.map(round) }), { noBusy: true });
+      A.edit("annot_resize", () => ({ ...at(), xref: d.a.x, rect: d.rect.map(round) }), { noBusy: true });
     } else A.renderOverlay(d.pg);
   }
   function annotDragMove(e, p) {
@@ -494,12 +495,12 @@
     if (prev && V.pages[prev.page]) A.renderOverlay(V.pages[prev.page]);
     if (sel && V.pages[sel.page] && (!prev || prev.page !== sel.page)) A.renderOverlay(V.pages[sel.page]);
     A.positionAnnbar();
-    A.emit("annotSelected", sel);
   };
 
   A.deleteAnnot = (page, xref) => {
     if (S.selAnnot && S.selAnnot.xref === xref) S.selAnnot = null;
-    return A.edit("annot_delete", () => ({ page, rev: V.pages[page].rev, xref }), { noBusy: true });
+    const at = A.pageRef(page);
+    return A.edit("annot_delete", () => ({ ...at(), xref }), { noBusy: true });
   };
 
   /* annotation mini toolbar */
@@ -526,8 +527,8 @@
     bar.onclick = (e) => {
       const b = e.target.closest("button");
       if (!b) return;
-      const i = sel.page;
-      if (b.dataset.c) A.edit("annot_edit", () => ({ page: i, rev: V.pages[i].rev, xref: a.x, color: b.dataset.c }), { noBusy: true });
+      const i = sel.page, at = A.pageRef(i);
+      if (b.dataset.c) A.edit("annot_edit", () => ({ ...at(), xref: a.x, color: b.dataset.c }), { noBusy: true });
       else if (b.dataset.act === "del") A.deleteAnnot(i, a.x);
       else if (b.dataset.act === "edit") A.editAnnotText(i, a);
     };
@@ -535,7 +536,8 @@
   A.editAnnotText = async (i, a) => {
     const text = await A.prompt(A.t("editText"), A.t("noteText"), a.txt || "", { multiline: true });
     if (text == null) return;
-    A.edit("annot_edit", () => ({ page: i, rev: V.pages[i].rev, xref: a.x, content: text }));
+    const at = A.pageRef(i);
+    A.edit("annot_edit", () => ({ ...at(), xref: a.x, content: text }));
   };
 
   /* ---------- text selection -> quick actions ---------- */
@@ -581,12 +583,15 @@
       else if (act === "speak") { A.speak(sw.text); }
       else if (act === "redact") {
         for (const [i, ws] of sw.byPage) {
-          const words = V.pages[i].info.words;
-          A.edit("annot_add", () => ({ page: i, rev: V.pages[i].rev, kind: "redact", rects: ws.map((k) => wordBox(words[k]).map(round)) }), { noBusy: true });
+          const words = V.pages[i].info.words, at = A.pageRef(i);
+          A.edit("annot_add", () => ({ ...at(), kind: "redact", rects: ws.map((k) => wordBox(words[k]).map(round)) }), { noBusy: true });
         }
         A.toast(A.t("redactMarked"), "info");
       } else {
-        for (const [i, ws] of sw.byPage) A.edit("annot_add", () => ({ page: i, rev: V.pages[i].rev, kind: act, words: ws, color: act === "highlight" ? S.style.hl : S.style.color }), { noBusy: true });
+        for (const [i, ws] of sw.byPage) {
+          const at = A.pageRef(i);
+          A.edit("annot_add", () => ({ ...at(), kind: act, words: ws, color: act === "highlight" ? S.style.hl : S.style.color }), { noBusy: true });
+        }
       }
       window.getSelection().removeAllRanges();
       hideSelbar();
@@ -605,7 +610,6 @@
     document.execCommand("copy");
     ta.remove();
   }
-  A.copyText = copyText;
 
   /* ---------- panning ---------- */
   let pan = null, spaceDown = false;
@@ -681,10 +685,16 @@
     document.addEventListener("mouseup", () => setTimeout(showSelbar, 0));
     document.addEventListener("selectionchange", () => { if (window.getSelection().isCollapsed) hideSelbar(); });
     A.$("#viewer").addEventListener("scroll", () => { hideSelbar(); if (S.selAnnot) A.positionAnnbar(); }, { passive: true });
-    window.addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat && !isTyping(e)) { spaceDown = true; host.classList.add("handmode"); } });
+    window.addEventListener("keydown", (e) => {
+      if (e.code !== "Space" || isTyping(e)) return;
+      if (e.target === V.viewer || e.target === document.body) e.preventDefault(); // else the view scrolls a screen
+      if (!e.repeat) { spaceDown = true; host.classList.add("handmode"); }
+    });
     window.addEventListener("keyup", (e) => { if (e.code === "Space") { spaceDown = false; host.classList.toggle("handmode", S.mode === "hand"); } });
     A.on("zoom", () => { if (S.selAnnot) A.positionAnnbar(); });
   };
+  // object numbers repeat between files: a selection in the last one would pick (and Delete remove) another
+  A.on("doc", ({ prev, doc }) => { if (!doc || !prev || prev.id !== doc.id) S.selAnnot = null; });
   const isTyping = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
   A.isTyping = isTyping;
   A.wordBox = wordBox;

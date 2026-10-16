@@ -34,6 +34,18 @@ def vec_to_unrot(dx: float, dy: float, page: pymupdf.Page) -> pymupdf.Point:
     return pymupdf.Point(dx, dy) * m - pymupdf.Point(0, 0) * m
 
 
+def to_pdf(page: pymupdf.Page) -> pymupdf.Matrix:
+    """Unrotated space -> PDF user space: the inverse of how PyMuPDF reads annotation points (MuPDF's page
+    transform, then derotated), so it holds for a CropBox past the MediaBox and for /UserUnit too.
+    ~page.transformation_matrix leaves out the CropBox offset of a turned page (PyMuPDF 1.28): a signature on a
+    cropped, turned page landed off the page, and moved drawings jumped.
+    shortcut: goes through MuPDF's own objects, check again when requirements.txt moves past PyMuPDF 1.28."""
+    m = pymupdf.mupdf
+    ctm = m.FzMatrix()
+    m.pdf_page_transform(pymupdf._as_pdf_page(page), m.FzRect(), ctm)
+    return ~(pymupdf.Matrix(ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f) * page.derotation_matrix)
+
+
 def display_angle(direction: Sequence[float], page: pymupdf.Page) -> int:
     """Text direction (unit vector, unrotated space) -> on-screen angle snapped to 0/90/180/270.
 

@@ -203,7 +203,7 @@
     const items = (r && r.items) || [];
     if (!items.length) { host.innerHTML = `<p class="hint">${A.esc(A.t("noSigsFound"))}</p>`; return; }
     host.innerHTML = items.map((s) => `<div class="sigstat ${s.status}">${A.icon(A.STATUS_ICON[s.status] || "warn", 18)}
-      <div><b>${A.esc(A.t("sig_" + s.status))}</b><div>${A.esc(s.signer || "?")}${s.email ? ` &lt;${A.esc(s.email)}&gt;` : ""}</div>
+      <div><b>${A.esc(A.t(s.kind === "timestamp" ? "ts_" + s.status : "sig_" + s.status))}</b><div>${A.esc(s.signer || "?")}${s.email ? ` &lt;${A.esc(s.email)}&gt;` : ""}</div>
       <small>${A.esc([A.fmtIsoDate(s.time), s.reason, s.location].filter(Boolean).join(" · "))}</small>
       <small>${A.esc(A.t("issuedBy", { who: s.issuer || "?" }))}</small></div></div>`).join("") +
       (r.dirty ? `<p class="hint warn">${A.esc(A.t("sigCheckSaved"))}</p>` : "");
@@ -440,6 +440,7 @@
       const r = await A.call("ocr_start", { langs: chosen.join("+"), pages: val(root, "ocrPg"), force: on(root, "ocrForce"), dpi: +segVal(root, "ocrQ") },
         { handle: (e) => e.error === "NOTHING_TO_OCR" && (A.toast(A.t("e_NOTHING_TO_OCR"), "info"), true) });
       if (!r) return;
+      S.settings.ocr_langs = chosen.join("+"); // the backend keeps them for next time; the panel shows them now
       const j = await A.runJob(r.job, A.t("ocrRunning"), r.total);
       if (j.state === "done") A.toast(A.t("ocrDone", { pages: j.result.pages, words: j.result.words }));
       else if (j.state === "cancelled") A.toast(A.t("cancelled"), "info");
@@ -506,12 +507,8 @@
       draw();
     };
     A.$("#mPick", root).onclick = async () => {
-      const r = await A.call("merge_dialog", {}, { handle: (e) => e.error === "NEED_TWO" });
-      const paths = (r && r.paths) || [];
-      if (!r) {
-        // a single file is fine here: the list collects across several picks
-      }
-      paths.forEach((p) => { if (!mergeList.includes(p)) mergeList.push(p); });
+      const r = await A.call("merge_dialog", {});
+      ((r && r.paths) || []).forEach((p) => { if (!mergeList.includes(p)) mergeList.push(p); });
       draw();
     };
     if (A.$("#mCur", root)) A.$("#mCur", root).onclick = () => { if (!mergeList.includes(S.doc.path)) mergeList.unshift(S.doc.path); draw(); };
@@ -600,8 +597,8 @@
     const reopened = !prev || !doc || prev.id !== doc.id;
     const structural = prev && doc && (prev.protected !== doc.protected || prev.owner !== doc.owner || prev.forms !== doc.forms || prev.signed !== doc.signed || prev.scanned !== doc.scanned);
     if (reopened || structural || S.panel === "annotate") {
-      clearTimeout(A._panelT);
-      A._panelT = setTimeout(render, S.panel === "annotate" ? 250 : 0);
+      clearTimeout(A._panelT); // the comments list alone is read again, so it keeps its place
+      A._panelT = setTimeout(reopened || structural ? render : () => loadComments(A.$("#panelInner")), S.panel === "annotate" ? 250 : 0);
     }
   });
 })(window.Aurora);

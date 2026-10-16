@@ -16,10 +16,10 @@ import itertools
 import logging
 import os
 import secrets
-import shutil
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 import pymupdf
 
@@ -33,15 +33,36 @@ _DOC_ID = itertools.count(1)
 MAX_UNDO = 60
 MAX_UNDO_BYTES = 700 * 1024 * 1024
 SPILL_BYTES = 2 * 1024 * 1024  # bigger undo steps wait in a temporary file, not in memory
+_CHUNK = 16 * 1024 * 1024  # a spilled step is encrypted in parts: AES-GCM takes at most 2 GiB at once
+
+
+def _stamp(path: str) -> tuple[int, int] | None:
+    """Size and modification time: whether a file is still the one this session read or wrote. None: no file."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
 
 
 def _has_signatures(doc) -> bool:
-    """True when a signature field actually holds a signature (empty fields don't count)."""
+    """True when a signature field actually holds a signature (empty fields don't count). Reads the pages'
+    lists of widgets without loading them: page.widgets() took seconds to open a big form.
+    shortcut: works through MuPDF's objects, check again when requirements.txt moves past PyMuPDF 1.28."""
     if (doc.get_sigflags() or 0) <= 0:
         return False
-    for page in doc:
-        if any(w.is_signed for w in page.widgets(types=[pymupdf.PDF_WIDGET_TYPE_SIGNATURE])):
-            return True
+    m = pymupdf.mupdf
+    pdf = pymupdf._as_pdf_document(doc)
+    for pno in range(len(doc)):
+        for xref, kind, _ in doc.page_annot_xrefs(pno):
+            if kind != pymupdf.PDF_ANNOT_WIDGET:
+                continue
+            obj = m.pdf_load_object(pdf, xref)
+            try:
+                if m.pdf_field_type(obj) == m.PDF_WIDGET_TYPE_SIGNATURE and m.pdf_signature_is_signed(pdf, obj):
+                    return True
+            except Exception:  # a field MuPDF cannot read holds no signature it can show
+                continue
     return False
 
 
@@ -69,17 +90,24 @@ class Snapshot:
     """One undo step: the whole document as it was, with its page revisions.
 
     A big one (a scanned document) goes to an anonymous temporary file, which the system removes
-    when it is closed or the program ends, so a long undo history does not fill the memory.
+    when it is closed or the program ends, so a long undo history does not fill the memory. It is
+    encrypted there with a key that only this step holds in memory: the working copy of a protected
+    file has no password.
     """
 
     def __init__(self, label: str, data: bytes, revs: list, sizes: list, state: int, fonts: bool):
         self.label, self.revs, self.sizes, self.state, self.fonts = label, revs, sizes, state, fonts
         self.size = len(data)
-        self._file = None
+        self._file = self._key = None
         if self.size > SPILL_BYTES:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # comes with pyHanko
+
             try:
+                self._key = AESGCM.generate_key(bit_length=256)  # one per step: a part's number is its nonce
                 self._file = tempfile.TemporaryFile()
-                self._file.write(data)
+                aes, view = AESGCM(self._key), memoryview(data)
+                for k, start in enumerate(range(0, self.size, _CHUNK)):
+                    self._file.write(aes.encrypt(k.to_bytes(12, "big"), view[start:start + _CHUNK], None))
                 data = b""
             except OSError:  # no room in the temp folder: memory still works
                 self.close()
@@ -94,8 +122,13 @@ class Snapshot:
     def data(self) -> bytes:
         if self._file is None:
             return self._data
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        aes, parts = AESGCM(self._key), []
         self._file.seek(0)
-        return self._file.read()
+        while part := self._file.read(_CHUNK + 16):  # each part carries its 16-byte tag
+            parts.append(aes.decrypt(len(parts).to_bytes(12, "big"), part, None))
+        return b"".join(parts)
 
     def close(self) -> None:
         if self._file is not None:
@@ -138,8 +171,11 @@ class Session:
         self.protection: dict | None = None
         self.fonts_embedded = False
         self.signed = False
+        self.original: bytes | None = None  # the bytes of a signed file as opened, while the file holds them
+        self.disk: tuple[int, int] | None = None  # the file as this session last read or wrote it (_stamp)
         self.scanned = False
         self.forms = False
+        self.xfa = False
         self.job: str | None = None
         self._job_thread: threading.Thread | None = None
         self.doc_id = 0
@@ -149,6 +185,7 @@ class Session:
     def open(self, path: str, password: str | None = None) -> None:
         with self.lock:
             self._check_job()  # opening now would drop the result of the running OCR
+            before = _stamp(path)
             doc, info = pt.load_for_editing(path, password)
             try:
                 an.settle_fields(doc)
@@ -158,8 +195,13 @@ class Session:
             if info.get("converted"):
                 name = os.path.splitext(name)[0] + ".pdf"
             self._install(doc, info, None if info.get("converted") else os.path.abspath(path), name)
+            self.disk = before
             if info.get("converted"):
                 self.saved_state = -1  # never saved as PDF yet
+            elif self.signed:  # Save As and a further signature copy these bytes, not what the file holds later
+                with open(path, "rb") as f:
+                    data = f.read()
+                self.original = data if _stamp(path) == before else None  # changed while it opened: no copy
 
     def _install(self, doc, info: dict, path: str | None, name: str) -> None:
         self.close()
@@ -177,8 +219,10 @@ class Session:
             self.protection = {k: info.get(k) for k in ("user_pw", "owner_pw", "perms", "algorithm")}
         self.fonts_embedded = False
         self.signed = _has_signatures(doc)
+        self.original = None
         self.scanned = ocr.looks_scanned(doc)
         self.forms = an.has_fields(doc)
+        self.xfa = an.xfa_only(doc)
 
     def close(self) -> None:
         with self.lock:
@@ -189,6 +233,7 @@ class Session:
                     pass
             self.doc = None
             self.path = None
+            self.original = self.disk = None
             self.name = ""
             self.revs, self.sizes, self._rev_index = [], [], {}
             _drop(self.undo_stack)
@@ -366,13 +411,16 @@ class Session:
             p["owner_pw"] = secrets.token_urlsafe(24)
         return p
 
-    def write(self, out_path: str, *, protection: dict | None | str = "keep", compress: bool = False) -> None:
+    def write(self, out_path: str, *, protection: dict | None | str = "keep") -> None:
         """Write the current document to ``out_path`` atomically (temp file + replace)."""
         with self.lock:
             self.require()
             prot = self.save_protection() if protection == "keep" else protection
-            _atomic(out_path, lambda tmp: pt.save_pdf(self.doc, tmp, compress=compress, subset_fonts=self.fonts_embedded,
+            _atomic(out_path, lambda tmp: pt.save_pdf(self.doc, tmp, subset_fonts=self.fonts_embedded,
                                                       **pt.protection_args(prot)))
+            if self._is_path(out_path):
+                self.original = None  # the file holds a rewrite now, and its signatures are broken
+                self.disk = _stamp(out_path)
 
     def save(self) -> str:
         """Save over the current file, keeping its protection."""
@@ -384,32 +432,38 @@ class Session:
                 return self.path  # nothing changed: leave the file, and any signature in it, alone
             if self.protection and self.protection.get("owner_pw") is None:
                 raise SessionError("SAVE_AS_COPY")  # never rewrite a file whose owner password we lack
+            if _stamp(self.path) not in (None, self.disk):
+                raise SessionError("FILE_CHANGED")  # another program wrote it since (a sync, a colleague): keep that
             self.write(self.path)
             self.saved_state = self.state
             return self.path
 
+    def _is_path(self, path: str) -> bool:
+        return bool(self.path) and os.path.normcase(os.path.abspath(path)) == os.path.normcase(self.path)
+
     @property
     def copies_as_is(self) -> bool:
         """Save As copies the file byte for byte: it is signed and unchanged, and a rewrite would break the signatures."""
-        return self.signed and not self.dirty and bool(self.path)
+        return self.signed and not self.dirty and self.original is not None
 
     def save_as(self, out_path: str, protection: dict | None | str = "keep") -> str:
         """Save to a new file and continue working on it, with ``protection`` (default: the current one)."""
         with self.lock:
             self.require()
-            same = bool(self.path) and os.path.normcase(os.path.abspath(out_path)) == os.path.normcase(self.path)
-            if self.copies_as_is:
-                if not same:
-                    _atomic(out_path, lambda tmp: shutil.copyfile(self.path, tmp))
+            if self.copies_as_is:  # the bytes as opened, also over the file itself if something replaced it since
+                data = self.original
+                _atomic(out_path, lambda tmp: Path(tmp).write_bytes(data))
             else:
-                if same and self.protection and self.protection.get("owner_pw") is None:
+                if self._is_path(out_path) and self.protection and self.protection.get("owner_pw") is None:
                     raise SessionError("SAVE_AS_COPY")
                 # without the owner password the copy gets a random one, so its restrictions stay
                 prot = self.save_protection() if protection == "keep" else protection
                 self.write(out_path, protection=prot)
                 self.protection = prot  # only after the write worked: later saves keep the same protection
+                self.original = None
             self.path = os.path.abspath(out_path)
             self.name = os.path.basename(out_path)
+            self.disk = _stamp(self.path)
             self.saved_state = self.state
             return self.path
 
@@ -438,6 +492,7 @@ class Session:
                 "signed": self.signed,
                 "forms": self.forms,
                 "scanned": self.scanned,
+                "xfa": self.xfa,
                 "busy": self.job or "",
                 "meta": pt.get_metadata(self.doc),
             }

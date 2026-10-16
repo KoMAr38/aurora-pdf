@@ -232,7 +232,6 @@
         if (this.big) { /* stay in the grid */ } else A.gotoPage(i);
       }
       A.emit("selection");
-      if (this.big && ev.detail === 2) A.setOrganize(false, i);
     }
   }
 
@@ -247,6 +246,7 @@
   };
   const rerender = () => { thumbs.render(); if (S.organize) grid.render(); };
   A.on("doc", ({ prev, doc }) => {
+    if (!doc || !prev || prev.id !== doc.id || S.anchorSel >= doc.pages.length) S.anchorSel = null; // Shift+click starts afresh
     if (!doc) { S.selected.clear(); thumbs.render(); grid.render(); return; }
     if (!prev || prev.id !== doc.id) S.selected.clear();
     const changed = !prev || prev.id !== doc.id || prev.pages.length !== doc.pages.length || prev.pages.some((p, k) => p[2] !== doc.pages[k][2]);

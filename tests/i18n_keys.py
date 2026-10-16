@@ -18,13 +18,13 @@ HELPERS = {"head": (1, 2), "field": (0, 2), "check": (1, 2), "range": (1,), "sec
 
 DYNAMIC = {
     # e_ + backend error codes (api.py, core/*) and the network failure in core.js
-    "e_": ["NOT_FOUND", "CANCELLED", "INVALID", "FILE_NOT_FOUND", "FILE_LOCKED", "ERROR", "BAD_PAGES", "STALE",
-           "NEED_PASSWORD", "WRONG_PASSWORD", "NOT_ALLOWED", "NEED_PATH", "CANNOT_DELETE_ALL", "BAD_KIND",
+    "e_": ["NOT_FOUND", "INVALID", "FILE_NOT_FOUND", "FILE_LOCKED", "ERROR", "BAD_PAGES", "NEED_PASSWORD", "WRONG_PASSWORD", "NOT_ALLOWED", "NEED_PATH", "CANNOT_DELETE_ALL", "BAD_KIND",
            "NOTHING_FOUND", "BUSY", "NOTHING_TO_OCR", "NEED_TWO", "NO_DOC", "NEED_PASSWORDS", "SAVE_AS_COPY",
-           "NOT_SUPPORTED", "EMPTY_SIGNATURE", "OPEN_FILE", "SOURCE_PROTECTED", "NETWORK"],
+           "NOT_SUPPORTED", "EMPTY_SIGNATURE", "OPEN_FILE", "SOURCE_PROTECTED", "SAVE_FIRST", "FILE_CHANGED",
+           "NETWORK"],
     # op_ + undo labels (Session.edit labels in api.py; annotation kinds)
     "op_": ["rotate", "delete", "reorder", "insert", "duplicate", "crop", "watermark", "header", "metadata", "ink",
-            "rect", "ellipse", "line", "arrow", "highlight", "underline", "strikeout", "squiggly", "text", "note",
+            "rect", "ellipse", "line", "arrow", "highlight", "underline", "strikeout", "text", "note",
             "image", "redact", "move", "resize", "edit", "scrub", "form", "flatten", "bookmarks", "attachment", "ocr"],
     # t_ + rail tools (panels.js) and annotation tools (tools.js)
     "t_": ["open", "annotate", "fillsign", "protect", "redact", "watermark", "organize", "ocr", "export", "combine",
@@ -37,6 +37,8 @@ DYNAMIC = {
             "Stamp", "Redact", "Polygon", "PolyLine", "Caret", "FileAttachment"],
     # sig_ + signature validation statuses (core/signing.py)
     "sig_": ["valid", "untrusted", "modified", "invalid"],
+    # ts_ + the same statuses for a document timestamp (core/signing.py validate, kind "timestamp")
+    "ts_": ["valid", "untrusted", "modified", "invalid"],
     "month": [str(n) for n in range(1, 13)],
     # plain keys picked from arrays / variables: shortcut rows (app.js), export cards (panels.js),
     # savedToast message keys, the read-aloud tip

@@ -23,7 +23,7 @@ Siste linje fra installasjonssjekken skal være:
 All checks passed. Report: C:\Users\<bruker>\AppData\Roaming\AuroraPDF\selftest.txt
 ```
 
-Siste linje fra `2_TESTER.bat` skal vise `172 passed`.
+Siste linje fra `2_TESTER.bat` skal vise `223 passed`.
 
 ## Bruk
 

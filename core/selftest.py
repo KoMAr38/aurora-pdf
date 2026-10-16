@@ -173,13 +173,14 @@ def check_server() -> str:
 
     session = Session()
     server = AppServer(Api(session), session, WEB_DIR).start()
+    local = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # a system proxy would get 127.0.0.1 too
     try:
-        html = urllib.request.urlopen(server.url, timeout=10).read().decode("utf-8")
+        html = local.open(server.url, timeout=10).read().decode("utf-8")
         if "js/app.js" not in html:
             raise RuntimeError("index page looks wrong")
         req = urllib.request.Request(server.url + "api/state", data=b"{}", method="POST",
                                      headers={"Content-Type": "application/json"})
-        state = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        state = json.loads(local.open(req, timeout=10).read())
         if not state.get("ok"):
             raise RuntimeError(f"state: {state}")
         return "UI and API answer on 127.0.0.1"
@@ -211,7 +212,12 @@ def check_webview2() -> str:
 
 
 def run() -> int:
-    tmp = Path(tempfile.mkdtemp(prefix="aurora_selftest_"))
+    # its own folder, gone at the end: the check makes a Digital ID (.p12) and a protected file in it
+    with tempfile.TemporaryDirectory(prefix="aurora_selftest_", ignore_cleanup_errors=True) as name:
+        return _run(Path(name))
+
+
+def _run(tmp: Path) -> int:
     checks = [
         ("imports", check_imports), ("resources", check_resources), ("render", check_render),
         ("encryption", lambda: check_encryption(tmp)), ("watermark", check_watermark), ("ocr", check_ocr),

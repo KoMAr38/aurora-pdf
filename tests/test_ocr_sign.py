@@ -52,6 +52,21 @@ def test_ocr_adds_invisible_text_in_place(rot):
     assert not ocr.looks_scanned(doc)
 
 
+def test_ocr_reads_the_scan_not_the_comments_on_it():
+    """A comment on a scan is no text of the page: the page still needs OCR, the comment's words stay out of the
+    text layer, and the layer brings no second copy of the picture into the file."""
+    doc = scanned_doc()
+    page = doc[0]
+    an.add_freetext(page, (100, 600, 500, 700), "Napomena: proveriti iznos pre slanja na potpis direktoru")
+    assert ocr.looks_scanned(doc) and not ocr.page_has_text(page)
+    before = len(doc.tobytes(garbage=3, deflate=True))
+    assert ocr.ocr_page(page, "srp_latn+eng", dpi=300) >= 10
+    assert len(doc.tobytes(garbage=3, deflate=True)) - before < 30_000  # fonts and text; the picture took 120 kB
+    for a in list(page.annots()):
+        page.delete_annot(a)
+    assert "saradnji" in page.get_text() and "Napomena" not in page.get_text()
+
+
 def test_ocr_languages_available():
     langs = ocr.available_languages()
     assert {"srp_latn", "srp", "nor", "eng"} <= set(langs)
@@ -133,6 +148,129 @@ def test_a_protected_copy_of_a_signed_file_has_a_broken_signature(tmp_path):
     res = _signed_ok(enc, "open1")
     assert res and res[0]["status"] == "invalid", res
     assert (res[0]["signer"], res[0]["reason"], res[0]["location"]) == ("Ana", "Odobreno", "Oslo")
+
+
+def _signed_form(tmp_path):
+    """An invoice form with an amount field, signed by the app: (path, signer)."""
+    doc = make_doc(1)
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.field_value = pymupdf.PDF_WIDGET_TYPE_TEXT, "amount", "1 000"
+    w.rect = pymupdf.Rect(300, 86, 450, 106)
+    doc[0].add_widget(w)
+    ident = signing.create_id("Ola Nordmann", "pw12345")
+    signer = signing.load_signer(ident["id"], "pw12345")
+    out = os.path.join(tmp_path, "invoice.pdf")
+    signing.sign_pdf(doc.tobytes(), out, signer)
+    return out, signer
+
+
+def _filled(data: bytes, value: str) -> bytes:
+    """The amount filled in as an incremental update, which a plain signature allows."""
+    from pyhanko.pdf_utils import generic
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    wr = IncrementalPdfFileWriter(io.BytesIO(data))
+    field = next(f for f in wr.root["/AcroForm"]["/Fields"] if f.get_object()["/T"] == "amount")
+    field.get_object()["/V"] = generic.TextStringObject(value)
+    wr.mark_update(field)
+    buf = io.BytesIO()
+    wr.write(buf)
+    return buf.getvalue()
+
+
+def _redrawn(data: bytes, text: str) -> bytes:
+    """The amount drawn anew, its value left as it was: readers show the drawing."""
+    from pyhanko.pdf_utils import generic
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    wr = IncrementalPdfFileWriter(io.BytesIO(data))
+    field = next(f for f in wr.root["/AcroForm"]["/Fields"] if f.get_object()["/T"] == "amount")
+    face = generic.StreamObject({generic.NameObject("/Type"): generic.NameObject("/XObject"),
+                                 generic.NameObject("/Subtype"): generic.NameObject("/Form"),
+                                 generic.NameObject("/BBox"): generic.ArrayObject(map(generic.NumberObject, (0, 0, 150, 20)))},
+                                stream_data=f"BT /Helv 12 Tf 2 5 Td ({text}) Tj ET".encode())
+    field.get_object()["/AP"] = generic.DictionaryObject({generic.NameObject("/N"): wr.add_object(face)})
+    wr.mark_update(field)
+    buf = io.BytesIO()
+    wr.write(buf)
+    return buf.getvalue()
+
+
+def test_a_field_filled_in_after_signing_shows(tmp_path):
+    """A plain signature allows filling in the form later, so pyHanko finds nothing wrong: the panel must still
+    say that the content changed after signing (here the amount to pay), also when only the field's drawing
+    changed. A second signature fills only its own field, which changes nothing."""
+    out, signer = _signed_form(tmp_path)
+    assert [s["status"] for s in _signed_ok(out)] == ["valid"]
+    for changed in (_filled(open(out, "rb").read(), "9 000 000"), _redrawn(open(out, "rb").read(), "9 000 000")):
+        res = signing.validate(changed)
+        assert [(s["status"], s["detail"]) for s in res] == [("modified", "ENTIRE_REVISION; modification=FORM_FILLING")]
+    twice = os.path.join(tmp_path, "twice.pdf")
+    signing.sign_pdf(open(out, "rb").read(), twice, signer)
+    assert [s["status"] for s in signing.validate(open(twice, "rb").read())] == ["valid", "valid"]
+
+
+def _tsa():
+    """A time-stamping authority of its own, one the app does not know."""
+    import datetime as dt
+
+    from asn1crypto import keys, x509 as ax509
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+    from pyhanko.sign.timestamps.dummy_client import DummyTimeStamper
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test TSA")])
+    now = dt.datetime.now(dt.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - dt.timedelta(days=1))
+            .not_valid_after(now + dt.timedelta(days=30))
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.TIME_STAMPING]), critical=True)
+            .sign(key, hashes.SHA256()))
+    tsa_cert = ax509.Certificate.load(cert.public_bytes(serialization.Encoding.DER))
+    tsa_key = keys.PrivateKeyInfo.load(key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8,
+                                                          serialization.NoEncryption()))
+    return DummyTimeStamper(tsa_cert=tsa_cert, tsa_key=tsa_key, certs_to_embed=[tsa_cert])
+
+
+def test_long_term_data_after_signing_is_no_change_and_a_timestamp_is_no_signature(tmp_path):
+    """Long-term (PAdES) files get validation data (DSS) and document timestamps after their signatures. On a
+    form both once showed the signature as changed, and the timestamp as an invalid signature."""
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    from pyhanko.sign import signers
+    from pyhanko.sign.validation import dss
+
+    out, signer = _signed_form(tmp_path)
+    wr = IncrementalPdfFileWriter(io.BytesIO(open(out, "rb").read()))
+    dss.DocumentSecurityStore.supply_dss_in_writer(wr, sig_contents=None, certs=[signer.signing_cert])
+    buf = io.BytesIO()
+    wr.write(buf)
+    assert [s["status"] for s in signing.validate(buf.getvalue())] == ["valid"]
+    stamped = io.BytesIO()
+    signers.PdfTimeStamper(_tsa()).timestamp_pdf(IncrementalPdfFileWriter(io.BytesIO(buf.getvalue())), "sha256",
+                                                 output=stamped)
+    res = signing.validate(stamped.getvalue())
+    assert [(s["kind"], s["status"], s["signer"]) for s in res] == [
+        ("signature", "valid", "Ola Nordmann"), ("timestamp", "untrusted", "Test TSA")]
+    assert res[1]["time"]
+    res = signing.validate(_filled(stamped.getvalue(), "9 000 000"))  # filled in after both
+    assert [s["status"] for s in res] == ["modified", "modified"]
+
+
+def test_a_locked_target_leaves_no_half_signed_copy(tmp_path, monkeypatch):
+    ident = signing.create_id("Ola Nordmann", "pw12345")
+    out = tmp_path / "locked.pdf"
+    out.write_bytes(b"open in another program")
+
+    def locked(src, dst):
+        raise PermissionError(13, "in use", str(dst))
+
+    monkeypatch.setattr(signing.os, "replace", locked)
+    with pytest.raises(PermissionError):
+        signing.sign_pdf(make_doc(1).tobytes(), str(out), signing.load_signer(ident["id"], "pw12345"))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["locked.pdf"] and out.read_bytes() == b"open in another program"
 
 
 def test_untrusted_and_import_remove(tmp_path):

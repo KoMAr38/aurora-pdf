@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import logging
 import os
 import re
 import shutil
@@ -56,10 +57,15 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
+    """Remembering is a convenience: a file another program holds (backup, antivirus) must not turn the open,
+    save or signing that asked for it into an error."""
     with _LOCK:
-        tmp = _file().with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, _file())
+        try:
+            tmp = _file().with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, _file())
+        except OSError:
+            logging.getLogger("aurora").warning("could not write the settings", exc_info=True)
 
 
 def update(**changes) -> dict:

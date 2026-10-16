@@ -39,7 +39,6 @@ window.Aurora = window.Aurora || {};
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     chevL: '<path d="M15 18l-6-6 6-6"/>',
-    chevR: '<path d="M9 18l6-6-6-6"/>',
     chevU: '<path d="M18 15l-6-6-6 6"/>',
     chevD: '<path d="M6 9l6 6 6-6"/>',
     rotL: '<path d="M4.5 9.5a8 8 0 1 1 .5 6"/><path d="M4.5 4.5v5h5"/>',
@@ -67,26 +66,17 @@ window.Aurora = window.Aurora || {};
     fitW: '<path d="M3 12h18M3 12l3.5-3.5M3 12l3.5 3.5M21 12l-3.5-3.5M21 12l-3.5 3.5"/><path d="M3 4v16M21 4v16" opacity="0.5"/>',
     fitP: '<rect x="6" y="3.5" width="12" height="17" rx="1.5"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5" opacity="0"/><path d="M12 7v10M9.5 9.5L12 7l2.5 2.5M9.5 14.5L12 17l2.5-2.5"/>',
     eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
-    eyeOff: '<path d="M3 3l18 18M10.6 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-2.7 3.4M6.4 6.5A15.7 15.7 0 0 0 2.5 12S6 18.5 12 18.5a9.3 9.3 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
-    grip: '<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>',
-    link: '<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.3 1.3"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.3-1.3"/>',
     folder: '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h9A1.5 1.5 0 0 1 21 9.9V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M3 11h18"/>',
-    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     download: '<path d="M12 4v11m0 0l-4-4m4 4l4-4"/><path d="M5 19.5h14"/>',
     signbox: '<rect x="3" y="6" width="18" height="12" rx="2" stroke-dasharray="3 2.4"/><path d="M6.5 14.5c1.4 0 1.8-3.5 3.3-3.5 1.2 0 .6 2.8 1.8 2.8.9 0 1.3-1.4 2.2-1.4.6 0 .9.7 1.5.7h2.2"/>',
     form: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M7 8.5h10M7 12.5h4"/><rect x="13" y="11" width="4" height="3.2" rx=".8"/><path d="M7 16.5h10"/>',
     layers: '<path d="M12 3.5L3 8.5l9 5 9-5z"/><path d="M3 12.5l9 5 9-5M3 16.5l9 5 9-5" opacity=".7"/>',
     compress: '<path d="M8 3.5v5H3M16 3.5v5h5M8 20.5v-5H3M16 20.5v-5h5"/>',
-    lang: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5S9.7 5.9 12 3.5z"/>',
     keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13.5h.01M18 13.5h.01M9 14.5h6"/>',
-    close: '<path d="M7 7l10 10M17 7L7 17"/>',
-    user: '<circle cx="12" cy="8.5" r="3.8"/><path d="M4.8 20c1.3-3.4 3.9-5.2 7.2-5.2s5.9 1.8 7.2 5.2"/>',
-    sparkle: '<path d="M12 3.5l1.9 5.1L19 10.5l-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9z"/>',
     blank: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/>',
   };
   A.icon = function (name, size, cls) {
     const s = size || 20;
     return `<svg class="ic${cls ? " " + cls : ""}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ""}</svg>`;
   };
-  A.hasIcon = (name) => !!P[name];
 })(window.Aurora);

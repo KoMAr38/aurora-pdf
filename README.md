@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 172 automatiske tester. 52 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 223 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -59,7 +59,7 @@ Koden er rundt 4 800 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS.
 
 **Bare sidene nær skjermen finnes i nettleseren.** Etter et hopp i et dokument på 400 sider er fire sider levende. De andre er tomme plassholdere med riktig størrelse. Under rask rulling hentes ingen bilder. De skarpe bildene lastes når rullingen stopper, og forespørsler for sider som har gått ut av skjermen, avbrytes. Etter en endring byttes bare miniatyren til siden som ble endret.
 
-**Hver endring er ett angresteg.** Før en endring tas et øyeblikksbilde av arbeidskopien. Feiler endringen, rulles den tilbake. OCR over mange sider er også ett steg. Store øyeblikksbilder, for eksempel av et skannet dokument, venter i en midlertidig fil i stedet for i minnet.
+**Hver endring er ett angresteg.** Før en endring tas et øyeblikksbilde av arbeidskopien. Feiler endringen, rulles den tilbake. OCR over mange sider er også ett steg. Store øyeblikksbilder, for eksempel av et skannet dokument, venter i en midlertidig fil i stedet for i minnet. Der er de kryptert med en nøkkel som bare finnes i minnet, siden arbeidskopien av en beskyttet fil ikke har passord.
 
 **Word-eksporten går i en egen prosess.** PyMuPDF tåler ikke å brukes fra to tråder samtidig, så all bruk går gjennom én lås. Konverteringen til Word kan ta minutter. Den får en kopi av dokumentet og kjører i en egen prosess, så sidene lastes mens den jobber, og «Avbryt» stopper prosessen.
 
@@ -75,17 +75,17 @@ Koden er rundt 4 800 linjer Python, 4 100 linjer JavaScript og 1 500 linjer CSS.
 
 **Ett stilark for begge temaene.** Alle fargene ligger i variabler. Det mørke temaet er standardverdiene, og det lyse overstyrer dem i én blokk. Tittellinjen i Windows får de samme fargene, og vinduet starter i riktig farge, så det ikke blinker mørkt før et lyst tema er lastet.
 
-**Oversettelsene er testet.** De 528 tekstene i grensesnittet ligger i én tabell med tre språk. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler, ikke brukes, eller har ulike plassholdere på de tre språkene.
+**Oversettelsene er testet.** De 535 tekstene i grensesnittet ligger i én tabell med tre språk. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler, ikke brukes, eller har ulike plassholdere på de tre språkene.
 
 ### Testing
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 63 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker og eksport |
-| `tests/test_api.py` | 44 | Alle kall gjennom API-et: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
-| `tests/test_ocr_sign.py` | 9 | OCR med språkdataene som følger med, digitale ID-er, signering og endringer etter signering |
+| `tests/test_engine.py` | 80 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker, eksport og plassering på beskårne og roterte sider |
+| `tests/test_api.py` | 58 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_ocr_sign.py` | 13 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
-| `tests/e2e/test_ui.py` | 52 | Grensesnittet, styrt med mus og tastatur |
+| `tests/e2e/test_ui.py` | 68 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
 
@@ -162,17 +162,21 @@ Resten står i `START_HER.md`.
 
 **Tre feil til i skjemaene.** En avkrysningsboks som står på to steder, ble bare krysset av på det ene, og når den ble slått av gjennom det andre, sto verdien fortsatt som avkrysset. PyMuPDF skrev også verdien som tekst og byttet ut skjemaets egne tegninger. Nå skifter alle stedene sammen, og tegningene beholdes. Verdien i et passordfelt lagres ikke lenger i filen, slik PDF-standarden sier, men står i feltet så lenge filen er åpen. Listebokser merker valgene med samme farge som andre PDF-lesere bruker, slik at også utskrift og eksport viser dem. Testen for det fant at en listeboks med Č i alternativene ble tegnet med skriftstørrelse 0 når valget selv var uten Č. En ny gjennomgang av rettelsene fant fem feil til. I en listeboks som var rullet ned, ble feil linje merket, fordi listen tegnes fra det øverste synlige valget. «Tøm feltene» byttet fortsatt ut skjemaets egne tegninger av knappene, og i en gruppe radioknapper uten tegninger ble alle knappene slått på. Feltlaget viste en knapp som avkrysset ut fra feltets verdi, ikke ut fra knappens egen tilstand. Og et passord ble liggende i filen når feltet sto flere steder og ett av stedene hadde sin egen kopi av verdien. Alle fem har tester. Gjennomgangen etter det fant to til. Et skjemafelt med en løkke i /Parent-kjeden stoppet lagringen av hele filen, og listebokser i et skjema som ber leseren tegne feltene, viste ikke valgene før de ble endret. Begge har tester.
 
+**En revisjon av hele koden i oktober 2026 fant 20 feil og 16 mindre mangler.** Sladding fjernet et skjemafelt fra siden, men verdien ble liggende i feltets overordnede objekt og i XFA-pakken. En signatur sto som gyldig selv om et felt i det signerte skjemaet var endret etterpå. OCR lagret slettede kommentarer som usynlig tekst og la igjen en kopi av hver side i 300 dpi. Ctrl+Z rett etter et pennestrøk angret endringen før strøket. Og når et annet program hadde endret filen, skrev lagringen over den nyere versjonen. En ny gjennomgang av rettelsene fant ni feil til. Et dokumenttidsstempel ble vist som en ugyldig signatur, langtidsdata lagt til etter signeringen fikk signaturen til å se endret ut, og et felt som bare var tegnet på nytt etter signeringen, ble ikke oppdaget. En sladdet radioknapp beholdt valget sitt i filen. Alle har tester.
+
 ---
 
 ## Forbehold
 
 **Prøvd som skrivebordsprogram bare på Windows.** `python main.py --browser` starter grensesnittet i en vanlig nettleser, men det er ment for utvikling: fildialogene og dra-og-slipp krever programvinduet. Testene er kjørt i Chromium på Linux og i Edge på Windows 11.
 
-**Sertifikatsignaturene bruker egne ID-er.** En digital ID som lages i programmet, er selvsignert. Signaturen viser at filen ikke er endret etter signering, men navnet betyr bare noe for en mottaker som stoler på sertifikatet. Det er ingen tidsstempeltjeneste og ingen langtidsvalidering, og signaturene er verken BankID eller kvalifiserte signaturer etter eIDAS.
+**Sertifikatsignaturene bruker egne ID-er.** En digital ID som lages i programmet, er selvsignert. Signaturen viser at filen ikke er endret etter signering, men navnet betyr bare noe for en mottaker som stoler på sertifikatet. Programmet legger ikke til tidsstempler eller langtidsdata selv, men kontrollerer dem i filer som er signert andre steder. Signaturene er verken BankID eller kvalifiserte signaturer etter eIDAS.
 
 **Tillatelsene håndheves ikke med kryptering.** Passordet for å åpne filen krypterer innholdet. Tillatelsene for utskrift, kopiering og redigering følges av PDF-lesere som respekterer standarden.
 
 **Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området.
+
+**Rene XFA-skjemaer vises ikke.** Et skjema som bare finnes som XFA (for eksempel fra Adobe LiveCycle), viser bare en venteside, og programmet sier fra når en slik fil åpnes. Et hybridskjema viser de vanlige feltene. XFA-pakken fjernes når feltene endres eller sladdes, slik at Adobe Reader viser det samme som andre lesere.
 
 **OCR bruker de raske språkmodellene til Tesseract** (tessdata_fast). Håndskrift blir ikke gjenkjent.
 

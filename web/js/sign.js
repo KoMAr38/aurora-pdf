@@ -296,7 +296,6 @@
       if (S.doc.dirty) A.toast(A.t("dsUsesCurrent"), "info");
       const r = await A.call("sign_digital", payload, { handle: (e) => { if (e.error === "WRONG_PASSWORD") { A.toast(A.t("idWrongPassword"), "bad"); return true; } } });
       if (r) A.savedToast(r.path, "signedTo");
-      A.emit("signed");
     };
     if (opts.rect) return go(opts.page, opts.rect);
     if (!res.visible) return go(0, null);

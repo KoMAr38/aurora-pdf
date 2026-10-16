@@ -8,6 +8,7 @@ signature covers the exact bytes written, so the signed file is never rewritten.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import io
 import json
 import os
@@ -209,7 +210,6 @@ def sign_pdf(
     appearance_pdf: bytes | None = None,
     reason: str = "",
     location: str = "",
-    contact: str = "",
     protection: dict | None = None,
     field_name: str | None = None,
     password: str | None = None,
@@ -241,6 +241,8 @@ def sign_pdf(
         kw = {"pdf_mac": False}
         if perms is not None and perms != -1:
             kw["perms"] = StandardPermissions.from_uint(perms & 0xFFFFFFFF)
+        # shortcut: the signed copy is AES-256 also when the document had AES-128 (pyHanko makes new files
+        # only so, and cannot sign on top of MuPDF's encryption); revisit if very old readers must open it
         w.encrypt(owner_pw, user_pw, **kw)
         buf = io.BytesIO()
         w.write(buf)
@@ -280,15 +282,21 @@ def sign_pdf(
             fields.append_signature_field(writer, spec)
         meta = signers.PdfSignatureMetadata(
             field_name=field_name, reason=reason or None, location=location or None,
-            contact_info=contact or None, name=signer_name(signer), md_algorithm="sha256",
+            name=signer_name(signer), md_algorithm="sha256",
         )
         pdf_signer = signers.PdfSigner(meta, signer=signer, stamp_style=style or stamp.TextStampStyle(stamp_text="%(signer)s\n%(ts)s", border_width=1))
         out = io.BytesIO()
         pdf_signer.sign_pdf(writer, output=out)
         tmp_out = out_path + ".aurora-tmp"
-        with open(tmp_out, "wb") as f:
-            f.write(out.getvalue())
-        os.replace(tmp_out, out_path)
+        try:
+            with open(tmp_out, "wb") as f:
+                f.write(out.getvalue())
+            os.replace(tmp_out, out_path)
+        finally:
+            try:
+                os.remove(tmp_out)  # left only when the target is locked (open in another program)
+            except OSError:
+                pass
         return field_name
     finally:
         if tmp_ap:
@@ -315,10 +323,53 @@ def _own_trust_roots() -> list:
     return roots
 
 
+def _field_values(root) -> dict:
+    """Full name -> value and looks of every form field that is not a signature field (unreadable parts left
+    out). The looks count: an edit can draw a field anew (its appearance) and leave its value as it was."""
+    out = {}
+
+    def looks(widget):
+        try:
+            ap = widget.get("/AP")
+            faces = ap.get_object().get("/N") if ap is not None else None
+            faces = faces.get_object() if faces is not None else None
+            if hasattr(faces, "data"):  # one drawing
+                drawn = hashlib.sha256(faces.data).hexdigest()
+            elif faces is not None:  # a drawing per state (check box, radio button)
+                drawn = sorted((str(k), hashlib.sha256(v.get_object().data).hexdigest()) for k, v in faces.items())
+            else:
+                drawn = None
+            return str(widget.get("/AS")), drawn
+        except Exception:
+            return None
+
+    def walk(kids, prefix, kind):
+        for ref in kids:
+            try:
+                f = ref.get_object()
+                name = f"{prefix}.{f['/T']}" if prefix and "/T" in f else str(f.get("/T", prefix))
+                ft = f.get("/FT", kind)
+                sub = f.get("/Kids")
+                if sub and any("/T" in k.get_object() for k in sub):
+                    walk(sub, name, ft)  # kids without a name are its widgets: the value stays here
+                elif ft != "/Sig":
+                    v = f.get("/V")
+                    widgets = [k.get_object() for k in sub] if sub else [f]
+                    out[name] = repr(v.get_object() if hasattr(v, "get_object") else v), [looks(w) for w in widgets]
+            except Exception:
+                continue
+
+    try:
+        walk(root["/AcroForm"]["/Fields"], "", None)
+    except Exception:
+        pass
+    return out
+
+
 def validate(pdf_bytes: bytes, password: str | None = None) -> list[dict]:
-    """Check every signature in a file. Never raises; problems become a status."""
+    """Check every signature and document timestamp in a file. Never raises; problems become a status."""
     from pyhanko.pdf_utils.reader import PdfFileReader
-    from pyhanko.sign.validation import validate_pdf_signature
+    from pyhanko.sign.validation import validate_pdf_signature, validate_pdf_timestamp
     from pyhanko_certvalidator import ValidationContext
 
     try:
@@ -329,9 +380,10 @@ def validate(pdf_bytes: bytes, password: str | None = None) -> list[dict]:
     except Exception:
         return []
     roots = _own_trust_roots()
+    values = None
     out = []
     for sig in sigs:
-        item = {"field": sig.field_name, "signer": "", "email": "", "issuer": "", "time": "",
+        item = {"field": sig.field_name, "kind": "signature", "signer": "", "email": "", "issuer": "", "time": "",
                 "reason": "", "location": "", "status": "invalid", "detail": ""}
         try:
             obj = sig.sig_object
@@ -344,16 +396,26 @@ def validate(pdf_bytes: bytes, password: str | None = None) -> list[dict]:
             item["email"] = native.get("email_address", "") or ""
             item["issuer"] = cert.issuer.native.get("common_name", "") or cert.issuer.human_friendly
             item["self_signed"] = cert.subject == cert.issuer
-            ts = sig.self_reported_timestamp
-            item["time"] = ts.astimezone().isoformat(timespec="minutes") if ts else ""
             vc = ValidationContext(trust_roots=roots, allow_fetching=False)
-            st = validate_pdf_signature(sig, vc)
+            if sig.sig_object_type == "/DocTimeStamp":  # long-term (PAdES) files add these after the signatures
+                item["kind"] = "timestamp"
+                st = validate_pdf_timestamp(sig, validation_context=vc)
+                ts = st.timestamp
+            else:
+                st = validate_pdf_signature(sig, vc)
+                ts = sig.self_reported_timestamp
+            item["time"] = ts.astimezone().isoformat(timespec="minutes") if ts else ""
             covered = st.coverage.name == "ENTIRE_FILE"
-            item["detail"] = f"{st.coverage.name}; modification={getattr(st.modification_level, 'name', '')}"
+            level = getattr(st.modification_level, "name", "")
+            filled = False
+            if not covered and level == "FORM_FILLING":  # a later signature fills its own field too: the values tell
+                values = _field_values(reader.root) if values is None else values
+                filled = _field_values(reader.get_historical_root(sig.signed_revision)) != values
+            item["detail"] = f"{st.coverage.name}; modification={level}"
             if not (st.intact and st.valid):
                 item["status"] = "invalid"
-            elif not covered and not st.docmdp_ok:  # later updates the signature does not allow
-                item["status"] = "modified"
+            elif not covered and (st.docmdp_ok is False or level in ("ANNOTATIONS", "OTHER") or filled):
+                item["status"] = "modified"  # changed after signing: more than another signature or LTV data
             elif st.trusted:
                 item["status"] = "valid"
             else:
@@ -368,7 +430,9 @@ def box_from_display(page, rect) -> tuple[float, float, float, float]:
     """Display-space rect on ``page`` -> signature box in PDF user space (x0, y0, x1, y1)."""
     import pymupdf
 
-    r = pymupdf.Rect(rect) * page.derotation_matrix * ~page.transformation_matrix
+    from .geom import to_pdf
+
+    r = pymupdf.Rect(rect) * page.derotation_matrix * to_pdf(page)
     r.normalize()
     return (round(r.x0, 2), round(r.y0, 2), round(r.x1, 2), round(r.y1, 2))
 

@@ -178,10 +178,15 @@ def ui(server, browser, docs, tmp_path):
     u.errors = errors
     yield u
     found = list(errors)  # what went wrong during the test itself
-    try:
+    try:  # the next test starts as the first did: no document, no saved signatures or Digital IDs
         rpc(page, "test_dialogs", {"answers": []})
         rpc(page, "close_doc")
-        rpc(page, "settings_set", {"lang": "sr", "theme": "system", "night": False, "fit": "width"})
+        rpc(page, "settings_set", {"lang": "sr", "theme": "system", "night": False, "fit": "width", "ocr_langs": "",
+                                   "sig_reason": "", "sig_location": ""})
+        for item in rpc(page, "sig_list")["items"]:
+            rpc(page, "sig_remove", {"id": item["id"]})  # moved aside in the test's data folder
+        for item in rpc(page, "ids_list")["items"]:
+            rpc(page, "id_remove", {"id": item["id"]})
     finally:
         ctx.close()
     assert not found, found
@@ -236,6 +241,19 @@ def test_zoom_buttons_wheel_and_fit(ui):
     ui.page.keyboard.press("Control+0")
     assert ui.js("Aurora.S.fit") == "width"
     assert ui.page.inner_text("#zoomVal").endswith("%")
+
+
+def test_space_pans_without_scrolling_the_view(ui, tmp_path):
+    ui.open(samples.build_big(tmp_path / "big.pdf", pages=20), copy=False)
+    ui.click_at(0, 300, 400)  # on the page, as before any pan
+    top = ui.js("document.querySelector('#viewer').scrollTop")
+    ui.page.keyboard.down("Space")
+    ui.page.wait_for_timeout(600)  # held: the key repeats
+    assert ui.js("document.querySelector('#pages').classList.contains('handmode')")
+    ui.page.keyboard.up("Space")
+    ui.page.keyboard.press("Space")  # a tap
+    ui.page.wait_for_timeout(300)
+    assert ui.js("document.querySelector('#viewer').scrollTop") == top
 
 
 def test_search_highlights_and_steps_through_hits(ui):
@@ -398,6 +416,54 @@ def test_quick_successive_drawings_all_land(ui):
     assert sorted(a["t"] for a in ui.annots(0)) == ["Ink", "Line", "Square", "Square"]
 
 
+def test_undo_right_after_a_pen_stroke_takes_back_the_stroke(ui):
+    """Strokes wait 0.9 s to go out together; Ctrl+Z in that time used to take back the edit before them."""
+    ui.open("plain")
+    ui.tool("rect")
+    ui.drag(0, [(100, 200), (200, 260)])
+    ui.idle()
+    ui.tool("pen")
+    ui.drag(0, [(80, 330), (140, 360), (220, 340)])
+    ui.page.keyboard.press("Control+z")  # at once, while the stroke still waits
+    ui.idle(1200)
+    assert [a["t"] for a in ui.annots(0)] == ["Square"]
+    ui.page.keyboard.press("Control+y")
+    ui.idle()
+    assert sorted(a["t"] for a in ui.annots(0)) == ["Ink", "Square"]
+    # the stroke's page image and text were on their way when undo dropped its revision: those answer 404
+    ui.errors[:] = [e for e in ui.errors if not re.fullmatch(r"HTTP 404 \S+/(page/\d+/\d+\.jpg|info/\d+\.json)", e)]
+
+
+def test_a_stroke_stays_on_its_page_when_an_earlier_page_goes(ui):
+    ui.open("plain")
+    ui.tool("pen")
+    ui.show_page(2)
+    ui.drag(2, [(80, 330), (140, 360), (220, 340)])
+    ui.page.locator("#thumbs .tile").nth(0).click(button="right")  # while the stroke still waits
+    ui.page.locator("#menu .m-item", has_text=ui.t("deletePage")).click()
+    ui.idle(1200)
+    assert [(a["t"], a["p"]) for a in ui.annots()] == [("Ink", 1)]
+    assert "Aurora sample page 3" in ui.rpc("page_text", {"page": 1})["text"]
+    assert ui.page.locator(".ov .pre-ink").count() == 0
+
+
+def test_a_shape_finished_while_a_page_delete_is_on_its_way_stays_on_its_page(ui):
+    ui.open("plain")
+    ui.tool("rect")
+    ui.show_page(2)
+    (x0, y0), (x1, y1) = ui.at(2, 100, 200), ui.at(2, 200, 260)
+    ui.js("""([x0, y0, x1, y1]) => {
+      Aurora.edit('delete_pages', {pages: [0]});  // on its way: the busy veil shows only after 280 ms
+      const ev = (type, x, y) => new PointerEvent(type, {bubbles: true, clientX: x, clientY: y, pointerId: 1,
+                                                         pointerType: 'mouse', button: 0, buttons: 1});
+      document.elementFromPoint(x0, y0).dispatchEvent(ev('pointerdown', x0, y0));
+      window.dispatchEvent(ev('pointermove', x1, y1));
+      window.dispatchEvent(ev('pointerup', x1, y1)); }""", [x0, y0, x1, y1])
+    ui.idle(800)
+    assert [(a["t"], a["p"]) for a in ui.annots()] == [("Square", 1)]
+    assert "Aurora sample page 3" in ui.rpc("page_text", {"page": 1})["text"]
+
+
 def test_eraser_removes_clicked_annotation(ui):
     ui.open("plain")
     ui.tool("ellipse")
@@ -407,6 +473,49 @@ def test_eraser_removes_clicked_annotation(ui):
     ui.click_at(0, 160, 340)
     ui.idle()
     assert ui.annots(0) == []
+
+
+def test_a_selection_does_not_outlive_its_comment_or_its_document(ui, tmp_path):
+    """Object numbers repeat between files: a selection left over picked, and Delete removed, a comment of the next file."""
+    for name, rect in (("a.pdf", (100, 200, 200, 260)), ("b.pdf", (220, 300, 330, 380))):
+        d = pymupdf.open(ui.docs["plain"])
+        d[0].add_rect_annot(pymupdf.Rect(rect))
+        d.save(str(tmp_path / name))
+    ui.open(str(tmp_path / "a.pdf"), copy=False)
+    ui.tool("select")
+    ui.click_at(0, 150, 201)
+    ui.page.wait_for_selector("#annbar:not(.hidden)")
+    ui.open(str(tmp_path / "b.pdf"), copy=False)
+    assert ui.js("Aurora.S.selAnnot") is None
+    ui.page.keyboard.press("Delete")
+    ui.idle()
+    assert len(ui.annots(0)) == 1 and not ui.doc()["dirty"]
+    # undo takes the selected comment away, and the selection with it
+    ui.tool("rect")
+    ui.drag(0, [(60, 330), (160, 380)])
+    ui.idle()
+    ui.tool("select")
+    ui.click_at(0, 110, 331)
+    ui.page.wait_for_selector("#annbar:not(.hidden)")
+    ui.page.keyboard.press("Control+z")
+    ui.idle()
+    assert ui.js("Aurora.S.selAnnot") is None and ui.page.locator("#annbar.hidden").count() == 1
+
+
+def test_the_comments_list_keeps_its_place_when_one_goes(ui, tmp_path):
+    ui.open(samples.build_big(tmp_path / "big.pdf", pages=60), copy=False)
+    for i in range(60):
+        ui.js("(i) => Aurora.edit('annot_add', {page: i, kind: 'note', point: [100, 100], text: 'Komentar ' + i})", i)
+    ui.idle()
+    ui.panel("annotate")
+    ui.page.wait_for_function("document.querySelectorAll('#clist .citem').length === 60", timeout=20000)
+    ui.js("() => { const p = document.querySelector('#panel'); p.scrollTop = p.scrollHeight; }")
+    ui.page.wait_for_timeout(200)
+    top = ui.js("document.querySelector('#panel').scrollTop")
+    assert top > 1000
+    ui.js("document.querySelectorAll('#clist .citem')[55].querySelector('[data-del]').click()")
+    ui.page.wait_for_function("document.querySelectorAll('#clist .citem').length === 59", timeout=20000)
+    assert ui.js("document.querySelector('#panel').scrollTop") > top - 150  # one row less, not back at the top
 
 
 # ---------------------------------------------------------------- forms and signatures
@@ -472,6 +581,52 @@ def test_list_takes_several_choices(ui, tmp_path):
     ui.idle()
     assert ui.js("Aurora.V.pages[0].info.fields.find(f => f.n === 'jezici').v") == ["sr", "en"]
     assert ui.toasts() == []
+
+
+def test_an_empty_dropdown_shows_no_choice_and_takes_the_first(ui, tmp_path):
+    """A dropdown with no value showed its first option, which the file did not hold, and picking it sent nothing."""
+    doc = pymupdf.open(ui.docs["plain"])
+    w = pymupdf.Widget()
+    w.field_type, w.field_name, w.rect = pymupdf.PDF_WIDGET_TYPE_COMBOBOX, "grad", pymupdf.Rect(50, 300, 250, 322)
+    w.choice_values, w.field_value = ["Beograd", "Niš", "Oslo"], ""  # nothing chosen yet, as in a blank form
+    doc[0].add_widget(w)
+    path = tmp_path / "grad.pdf"
+    doc.save(str(path))
+    ui.open(str(path), copy=False)
+    sel = ui.page.locator('.pg[data-i="0"] .fx select[title="grad"]')
+    assert sel.evaluate("s => s.selectedIndex") == -1
+    sel.focus()
+    ui.page.keyboard.press("ArrowDown")  # the first choice; it used to be passed over for the second
+    ui.page.wait_for_timeout(300)
+    ui.idle()
+    assert ui.js("Aurora.V.pages[0].info.fields.find(f => f.n === 'grad').v") == "Beograd"
+
+
+def test_a_box_ticked_with_the_keyboard_keeps_the_focus(ui):
+    """The field layer is drawn again when the answer comes; Tab and Space went on from the top of the page."""
+    ui.open("report")
+    ui.show_page(2)
+    ui.page.locator('.pg[data-i="2"] .fx .chk[title="samtykke"]').focus()
+    for ticked in (True, False):
+        ui.page.keyboard.press("Space")
+        ui.page.wait_for_function("(v) => !!Aurora.V.pages[2].info.fields.find(f => f.n === 'samtykke').v === v", arg=ticked)
+        ui.page.wait_for_timeout(300)
+        assert ui.js("document.activeElement.title") == "samtykke"
+        assert ("on" in ui.page.locator('.pg[data-i="2"] .fx .chk[title="samtykke"]').get_attribute("class").split()) is ticked
+
+
+def test_a_ticked_box_shows_the_file_again_after_undo(ui):
+    ui.open("report")
+    ui.show_page(2)
+    chk = ui.page.locator('.pg[data-i="2"] .fx .chk[title="samtykke"]')
+    chk.click()
+    ui.idle()
+    assert "on" in chk.get_attribute("class").split()
+    ui.page.keyboard.press("Control+z")
+    ui.idle()
+    ui.click_at(2, 400, 700)  # elsewhere on the page
+    ui.idle()
+    assert "on" not in chk.get_attribute("class").split()
 
 
 def _draw_signature(ui):
@@ -566,6 +721,20 @@ def test_digital_id_and_certificate_signature(ui):
     assert ui.t("signedCopyMsg") in ui.page.locator(".scrim:not(.out)").inner_text()
     ui.modal_button(ui.t("cancel"))
     assert not os.path.exists(ui.tmp / "never-protected.pdf")
+
+
+def test_a_dialogs_own_check_shows_its_toast_on_top(ui):
+    """The dialog stays open and answers with a toast, which used to land under its dimmed backdrop."""
+    ui.open("plain")
+    ui.panel("fillsign")
+    ui.page.click("#idNew")
+    ui.page.fill("#idN", "")  # it starts with the author's name from the settings
+    ui.modal_button(ui.t("create"))
+    toast = ui.page.locator(".toast", has_text=ui.t("idNeedName"))
+    toast.wait_for()
+    b = toast.bounding_box()
+    assert ui.js("([x, y]) => !!document.elementFromPoint(x, y).closest('.toast')", [b["x"] + b["width"] / 2, b["y"] + b["height"] / 2])
+    ui.modal_button(ui.t("cancel"))
 
 
 def test_wrong_id_password_is_reported(ui):
@@ -690,6 +859,17 @@ def test_organize_reorder_rotate_delete(ui):
     assert ui.page.locator("#thumbs .tile.selected").count() == 0
 
 
+def test_shift_click_starts_afresh_after_its_page_went(ui):
+    ui.open("plain")
+    ui.panel("organize")
+    ui.page.wait_for_selector("#grid .tile[data-i]")
+    ui.page.locator("#grid .tile[data-i]").nth(2).click()
+    ui.page.keyboard.press("Delete")
+    ui.idle()
+    ui.page.locator("#grid .tile[data-i]").nth(0).click(modifiers=["Shift"])
+    assert ui.js("[...Aurora.S.selected]") == [0]  # not pages 1 to 3 of a file that has 2
+
+
 def test_thumbnail_context_menu_duplicate_and_insert_blank(ui):
     ui.open("plain")
     ui.page.locator("#thumbs .tile").nth(1).click(button="right")
@@ -767,6 +947,23 @@ def test_ocr_scanned_page(ui):
     text = ui.rpc("page_text", {"page": 3})["text"]
     assert "Bekreftelse" in text and "kvartalsrapporten" in text
     assert ui.doc()["undo"] == "ocr"
+    ui.page.wait_for_timeout(300)
+    assert ui.page.is_checked("#ol_nor")  # the panel, drawn again after the run, still shows the languages used
+
+
+def test_a_job_closes_its_own_progress_dialog(ui):
+    """A dialog opened over the progress (the window's X, a dropped file) stays open; the progress goes."""
+    ui.open("report")
+    ui.panel("ocr")
+    ui.page.fill("#ocrPg", "4")
+    ui.page.click("#ocrGo")
+    ui.page.wait_for_selector(".scrim:not(.out) .job")
+    ui.js("() => { Aurora.modal({ title: 'Over it', body: '<p>x</p>' }); }")
+    ui.page.wait_for_function("(t) => [...document.querySelectorAll('.toast .msg')].some(e => e.textContent.startsWith(t))",
+                              arg=ui.t("ocrDone").split(".")[0], timeout=60000)
+    ui.page.wait_for_timeout(400)
+    assert ui.js("[...document.querySelectorAll('.scrim:not(.out) h3')].map(h => h.textContent)") == ["Over it"]
+    ui.modal_button(ui.t("ok"))
 
 
 @pytest.mark.parametrize("kind,check", [("txt", "Driftsinntektene"), ("docx", None)])
@@ -808,6 +1005,21 @@ def test_combine_files(ui, docs):
     d = pymupdf.open(out)
     assert len(d) == 7
     assert "Tredje kvartal" in d[0].get_text()
+
+
+def test_combining_the_open_file_asks_to_save_it_first(ui, docs):
+    """Its file does not hold the changes on screen yet, and they used to be left out without a word."""
+    ui.open("plain")
+    ui.js("Aurora.edit('rotate', {pages: [0], degrees: 90})")
+    ui.idle()
+    ui.panel("combine")
+    ui.page.click("#mCur")
+    ui.dialogs([docs["report"]])
+    ui.page.click("#mPick")
+    ui.page.wait_for_function("document.querySelectorAll('#mList .mrow').length === 2")
+    ui.page.click("#mGo")
+    ui.page.wait_for_function("(t) => [...document.querySelectorAll('.toast .msg')].some(e => e.textContent === t)",
+                              arg=ui.t("e_SAVE_FIRST"), timeout=10000)
 
 
 def test_protected_file_goes_in_with_its_owner_password(ui, docs):
@@ -982,6 +1194,31 @@ def test_closing_without_changes_quits_at_once(ui):
     ui.page.wait_for_function("window.__quit === 1", timeout=10000)
     assert ui.page.locator(".scrim:not(.out)").count() == 0
 
+
+def test_closing_while_a_job_runs_asks_and_stops_it_first(ui):
+    ui.open("report")
+    for _ in range(3):
+        ui.js("Aurora.edit('duplicate', {pages: [3]})")  # four scanned pages: the job runs for seconds
+    ui.idle()
+    ui.panel("ocr")
+    ui.page.fill("#ocrPg", "4-7")
+    ui.page.click("#ocrGo")
+    ui.page.wait_for_selector(".scrim:not(.out) .job")
+    ui.js("""() => { window.__quit = 0; const rpc = Aurora.rpc;
+      Aurora.rpc = (m, p) => m === 'quit' ? (window.__quit++, Promise.resolve({ok: true})) : rpc(m, p);
+      Aurora.confirmClose(); }""")
+    ui.page.wait_for_function("(t) => [...document.querySelectorAll('.scrim:not(.out) h3')].some(h => h.textContent === t)",
+                              arg=ui.t("jobRunningTitle"), timeout=15000)
+    assert ui.js("window.__quit") == 0
+    ui.modal_button(ui.t("closeAnyway"))
+    ui.page.wait_for_function("(t) => [...document.querySelectorAll('.scrim:not(.out) h3')].some(h => h.textContent === t)",
+                              arg=ui.t("unsavedTitle"), timeout=30000)  # the job has stopped; the changes are offered for saving
+    assert ui.rpc("state")["jobs"] == []
+    ui.page.wait_for_selector(".scrim:not(.out) .job", state="detached", timeout=5000)
+    ui.modal_button(ui.t("dontSave"))
+    ui.page.wait_for_function("window.__quit === 1", timeout=5000)
+
+
 def test_save_as_and_recent_files(ui):
     ui.open("plain")
     out = ui.tmp / "copy.pdf"
@@ -990,8 +1227,23 @@ def test_save_as_and_recent_files(ui):
     ui.page.wait_for_function("(p) => Aurora.S.doc.path === p", arg=str(out), timeout=15000)
     ui.page.click("#menuBtn")
     ui.page.locator("#menu .m-item", has_text=ui.t("closeDoc")).click()
-    ui.page.wait_for_selector("#start .ritem")
-    assert ui.page.locator("#start .ritem .rn").first.inner_text() == "copy.pdf"
+    # the list is read again after closing; until then the one from before shows
+    ui.page.wait_for_function("(n) => { const e = document.querySelector('#start .ritem .rn'); return e && e.textContent === n; }",
+                              arg="copy.pdf", timeout=10000)
+
+
+def test_a_file_another_program_changed_is_saved_as_a_new_file(ui):
+    path = ui.open("plain")
+    ui.js("Aurora.edit('rotate', {pages: [0], degrees: 90})")
+    ui.idle()
+    shutil.copy(ui.docs["report"], path)  # a newer version arrives in its place (a sync, a colleague)
+    newer = Path(path).read_bytes()
+    mine = ui.tmp / "mine.pdf"
+    ui.dialogs(mine)
+    ui.page.keyboard.press("Control+s")
+    ui.page.wait_for_function("(p) => Aurora.S.doc.path === p", arg=str(mine), timeout=15000)
+    assert Path(path).read_bytes() == newer and pymupdf.open(mine)[0].rotation == 90
+    assert ui.t("e_FILE_CHANGED") in ui.toasts()
 
 
 def test_print_renders_every_page_into_the_print_frame(ui):
@@ -1004,6 +1256,16 @@ def test_print_renders_every_page_into_the_print_frame(ui):
     ui.page.wait_for_function("window.__printed === 1", timeout=20000)
     n = ui.js("document.querySelector('#printFrame').contentDocument.querySelectorAll('img').length")
     assert n == 4
+    # the words for all pages work in the range field too, and a range past the end stops at the last page.
+    # Counted by the frame's "ready" message: a frame read from the cache may send it before its load event
+    ui.js("() => { window.__ready = 0; addEventListener('message', (e) => { if (e.data && e.data.auroraPrintReady) window.__ready++; }); }")
+    for k, (spec, pages) in enumerate((("sve", 4), ("2-30000000", 3)), start=1):
+        ui.js("() => { Aurora.print(); }")  # the frame has the focus since the first print: no Ctrl+P
+        ui.page.click('.scrim:not(.out) #prSeg [data-v="range"]')
+        ui.page.fill(".scrim:not(.out) #prRange", spec)
+        ui.modal_button(ui.t("printGo"))
+        ui.page.wait_for_function("(k) => window.__ready === k", arg=k, timeout=20000)
+        assert ui.js("document.querySelector('#printFrame').contentDocument.querySelectorAll('img').length") == pages
 
 
 # ---------------------------------------------------------------- languages and misc
@@ -1053,3 +1315,44 @@ def test_night_mode_and_keyboard_tools(ui):
     assert ui.js("Aurora.S.mode") == "select"
     ui.page.keyboard.press("PageDown")
     ui.page.wait_for_function("Aurora.S.current === 1", timeout=5000)
+
+
+def test_text_from_a_pdf_never_becomes_markup(ui, tmp_path):
+    """Comments and their authors, field names, values and options, bookmarks, attachments, metadata and the
+    file name all reach the page as text. One missed escape put this markup on the page."""
+    x = '"><img src=x onerror="window.__xss=(window.__xss||0)+1">'
+    doc = pymupdf.open(ui.docs["plain"])
+    page = doc[0]
+    note = page.add_text_annot((300, 100), "note " + x)
+    note.set_info(title="author " + x, content="content " + x)
+    note.update()
+    box = page.add_freetext_annot(pymupdf.Rect(60, 400, 300, 440), "free " + x)
+    box.set_info(title=x)
+    box.update()
+    for name, kind, rect in ((x + "t", pymupdf.PDF_WIDGET_TYPE_TEXT, (60, 460, 260, 480)),
+                             (x + "c", pymupdf.PDF_WIDGET_TYPE_COMBOBOX, (60, 500, 260, 520))):
+        w = pymupdf.Widget()
+        w.field_type, w.field_name, w.rect = kind, name, pymupdf.Rect(rect)
+        if kind == pymupdf.PDF_WIDGET_TYPE_COMBOBOX:
+            w.choice_values = [[x, x + " label"], ["b", "b"]]
+        w.field_value = x
+        page.add_widget(w)
+    doc.set_toc([[1, "bm " + x, 1], [2, x, 2]])
+    doc.embfile_add(x + ".csv", b"a;b\n", filename=x + ".csv", desc=x)
+    doc.set_metadata({k: x for k in ("title", "author", "subject", "keywords", "creator", "producer")})
+    path = tmp_path / ("x.pdf" if os.name == "nt" else 'x"><img src=x onerror=window.__xss=7>.pdf')  # Windows takes no " < >
+    doc.save(str(path))
+    ui.open(str(path), copy=False)
+    for tool in ("annotate", "info", "fillsign"):
+        ui.panel(tool)
+        ui.page.wait_for_timeout(600)
+    for side in ("outline", "attach"):
+        ui.page.click(f'#sideTabs [data-side="{side}"]')
+        ui.page.wait_for_timeout(600)
+    ui.tool("select")
+    ui.click_at(0, 302, 102)  # the note: its author shows in the mini toolbar
+    ui.page.wait_for_selector("#annbar:not(.hidden)")
+    ui.js("() => { Aurora.closeDoc(); }")  # the start screen lists the file by its name
+    ui.page.wait_for_function("(n) => [...document.querySelectorAll('#start .ritem .rn')].some(e => e.textContent === n)",
+                              arg=path.name, timeout=10000)
+    assert ui.js("window.__xss === undefined") and ui.js("document.querySelectorAll('img[src=\"x\"]').length") == 0

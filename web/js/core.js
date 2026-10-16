@@ -105,9 +105,20 @@
   // edits run one after another so each request sees the result of the previous one
   let chain = Promise.resolve();
   A.edit = (method, payload, opts) => {
+    if (A.flushInk) A.flushInk(); // ink strokes wait to be sent together: they come before what was done after them
     const p = chain.then(() => A.call(method, typeof payload === "function" ? payload() : payload, opts));
     chain = p.catch(() => null);
     return p;
+  };
+  /** The page at index ``i`` now, for an edit sent later: an earlier edit in the queue may move the pages
+   *  (a delete, an insert) before it goes. It goes to that same page, found by its object number, or comes
+   *  back STALE when the page is gone. Resolves to {page, rev} when called. */
+  A.pageRef = (i) => {
+    const px = S.doc && S.doc.pages[i] ? S.doc.pages[i][3] : 0;
+    return () => {
+      const k = S.doc ? S.doc.pages.findIndex((p) => p[3] === px) : -1;
+      return k < 0 ? { page: i, rev: -1 } : { page: k, rev: S.doc.pages[k][2] };
+    };
   };
   /** Resolves once every queued edit has been answered (used by tests and before saving). */
   A.idle = () => chain.then(() => null);
@@ -243,10 +254,12 @@
     new Promise((resolve) => {
       const body = A.h(`<div class="job"><div class="bar"><i></i></div><div class="job-txt"></div></div>`);
       const bar = A.$("i", body), txt = A.$(".job-txt", body);
+      let dlg = null;
       A.modal({
         title,
         body,
         dismiss: false,
+        onOpen: (m) => (dlg = m),
         buttons: [{ label: A.t("cancel"), kind: "ghost", onClick: () => { A.rpc("job_cancel", { id: jobId }); txt.textContent = A.t("cancelling"); return false; } }],
       });
       const tick = async () => {
@@ -260,8 +273,7 @@
           setTimeout(tick, 280);
           return;
         }
-        const m = A.topModal();
-        if (m) m.close(null);
+        dlg.close(null); // its own: another dialog may have opened on top meanwhile
         if (j && j.doc) A.applyDoc(j.doc);
         resolve(j || { state: "error", error: "?" });
       };

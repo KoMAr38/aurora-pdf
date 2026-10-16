@@ -9,8 +9,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-# keep tests out of the real user profile (settings, IDs, signatures)
-os.environ.setdefault("AURORA_DATA_DIR", tempfile.mkdtemp(prefix="aurora_data_"))
+# keep tests out of the real user profile (settings, IDs, signatures); the folder goes when the run ends
+_DATA = tempfile.TemporaryDirectory(prefix="aurora_data_", ignore_cleanup_errors=True)
+os.environ.setdefault("AURORA_DATA_DIR", _DATA.name)
 
 import pymupdf  # noqa: E402
 

@@ -110,7 +110,10 @@ def load_for_editing(path: str, password: str | None = None) -> tuple[pymupdf.Do
         raise ValueError("NOT_SUPPORTED") from exc
     try:
         if not src.is_pdf:
-            data = src.convert_to_pdf()
+            try:
+                data = src.convert_to_pdf()
+            except Exception as exc:  # a damaged picture opens, and fails only here
+                raise ValueError("NOT_SUPPORTED") from exc
             return pymupdf.open("pdf", data), {"protected": False, "converted": True}
         needs = bool(src.needs_pass)
         enc = _encrypt_dict(src)
@@ -255,9 +258,7 @@ def parse_page_range(spec: str, total: int) -> list[int]:
             end = int(b) if b.strip() else total
         else:
             start = end = int(chunk)
-        for n in range(start, end + 1):
-            if 1 <= n <= total:
-                out.add(n - 1)
+        out.update(range(max(start, 1) - 1, min(end, total)))  # "2-99999999" must not count to 99999999
     if not out:
         raise ValueError("empty page range")
     return sorted(out)
@@ -396,7 +397,7 @@ def add_header_footer(
 
     ``text`` may use {n}, {total}, {date} and {file}; numbering runs over the
     targeted pages starting at ``start``. {date} is ``date_text`` (the UI sends today's
-    date in its language), or an ISO date.
+    date in its language), or an ISO date. Other braces stay as typed ("{Fortrolig}").
     """
     if position not in HF_POSITIONS:
         raise ValueError(f"bad position: {position}")
@@ -405,7 +406,8 @@ def add_header_footer(
     today = date_text or datetime.date.today().isoformat()
     for k, pno in enumerate(targets):
         page = doc[pno]
-        label = text.format(n=start + k, total=start + len(targets) - 1, date=today, file=file_name)
+        values = {"n": start + k, "total": start + len(targets) - 1, "date": today, "file": file_name}
+        label = re.sub(r"\{(n|total|date|file)\}", lambda m: str(values[m[1]]), text)
         tl = text_length(label, fontsize)
         w, h = page.rect.width, page.rect.height
         x = {"l": margin, "c": (w - tl) / 2, "r": w - margin - tl}[position[1]]
@@ -429,6 +431,16 @@ def delete_pages(doc: pymupdf.Document, pages: Sequence[int]) -> None:
     if len(set(pages)) >= len(doc):
         raise ValueError("cannot delete every page")
     doc.delete_pages(sorted(set(pages)))
+
+
+def pages_linking_to(doc: pymupdf.Document, targets: set[int]) -> set[int]:
+    """The other pages with a link to one of ``targets``: deleting the targets takes those links away too."""
+    out = set()
+    for i in range(len(doc)):
+        if i not in targets and any(kind == pymupdf.PDF_ANNOT_LINK for _, kind, _ in doc.page_annot_xrefs(i)):
+            if any(link.get("page") in targets for link in doc[i].get_links()):
+                out.add(i)
+    return out
 
 
 def reorder_pages(doc: pymupdf.Document, new_order: Sequence[int]) -> None:
@@ -506,7 +518,7 @@ def duplicate_pages(doc: pymupdf.Document, pages: Sequence[int]) -> list[int]:
     made = []
     for offset, pno in enumerate(sorted(set(pages))):
         src = pno + offset
-        doc.fullcopy_page(src, src + 1)
+        doc.fullcopy_page(src, src + 1 if src + 1 < len(doc) else -1)  # PyMuPDF takes -1 for the end, not len(doc)
         made.append(src + 1)
     return made
 
@@ -789,22 +801,28 @@ def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None
 
 
 def compress_to(doc: pymupdf.Document, out_path: str, *, image_dpi: int = 150, quality: int = 75,
-                protection: dict | None = None) -> int:
+                protection: dict | None = None, progress: Progress = None) -> tuple[int, int]:
     """Write a smaller copy: downsample big images, subset fonts, deflate everything.
 
-    Returns the new file size. The session document is not modified.
+    Returns the sizes before and after. The session document is not modified. A cancel
+    (``progress`` returning False) stops it before the image pass and before the file is written.
+    shortcut: the image pass itself cannot be stopped (one MuPDF call); run it in a process of its
+    own, as the Word export, if big scans make users wait on it.
     """
-    tmp = pymupdf.open("pdf", doc.tobytes())
+    data = doc.tobytes()
+    tmp = pymupdf.open("pdf", data)
     try:
+        _tick(progress, 0, 2)
         if image_dpi:
             try:
                 tmp.rewrite_images(dpi_threshold=int(image_dpi * 1.3), dpi_target=int(image_dpi), quality=int(quality))
             except Exception:  # shortcut: keep going with lossless savings only
                 pass
+        _tick(progress, 1, 2)
         save_pdf(tmp, out_path, compress=True, subset_fonts=True, **protection_args(protection))
     finally:
         tmp.close()
-    return os.path.getsize(out_path)
+    return len(data), os.path.getsize(out_path)
 
 
 def export_docx(pdf_path: str, out_path: str, progress: Progress = None, password: str | None = None) -> None:

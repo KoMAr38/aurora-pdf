@@ -256,7 +256,6 @@ class Api:
             "recent": settings.recent(),
             "ocrLangs": ocr.available_languages(),
             "jobs": self._jobs.running(),
-            "platform": sys.platform,
         }
 
     @rpc
@@ -499,11 +498,14 @@ class Api:
     @rpc
     def delete_pages(self, a):
         pages = self._pages(a.get("pages"), default_all=False)
+        if not pages:
+            return self._doc()  # nothing to do: no undo step, nothing changed
         if len(pages) >= len(self.s.doc):
             raise SessionError("CANNOT_DELETE_ALL")
         gone = set(pages)
         with self.s.edit("delete", right="assemble") as ed:
-            keep = [r for i, r in enumerate(self.s.revs) if i not in gone]
+            linked = pt.pages_linking_to(self.s.doc, gone)  # they lose those links: new revisions
+            keep = [None if i in linked else r for i, r in enumerate(self.s.revs) if i not in gone]
             pt.delete_pages(self.s.doc, pages)
             ed.revs = keep
         return self._doc()
@@ -570,6 +572,8 @@ class Api:
     @rpc
     def duplicate(self, a):
         pages = self._pages(a.get("pages"), default_all=False)
+        if not pages:
+            return self._doc()
         with self.s.edit("duplicate", right="assemble") as ed:
             revs = list(self.s.revs)
             made = pt.duplicate_pages(self.s.doc, pages)
@@ -769,8 +773,8 @@ class Api:
     @rpc
     def field_set(self, a):
         p = self._page_no(a)
-        with self.s.edit("form", right="form", pages=[p]):
-            an.set_field(self.s.doc[p], int(a["xref"]), a.get("value"))
+        with self.s.edit("form", right="form", pages=[]) as ed:
+            ed.touch(*an.set_field(self.s.doc[p], int(a["xref"]), a.get("value")))
         return self._doc()
 
     @rpc
@@ -951,9 +955,9 @@ class Api:
                     pt.export_text(self.s.doc, out, pages)
                     return {"path": out}
                 if kind == "compress":
-                    before = len(self.s.doc.tobytes())
-                    size = pt.compress_to(self.s.doc, out, image_dpi=int(a.get("dpi", 150)),
-                                          quality=int(a.get("quality", 75)), protection=prot)
+                    before, size = pt.compress_to(self.s.doc, out, image_dpi=int(a.get("dpi", 150)),
+                                                  quality=int(a.get("quality", 75)), protection=prot,
+                                                  progress=job.progress)
                     return {"path": out, "before": before, "after": size}
                 if kind == "images":
                     files = pt.export_page_images(self.s.doc, pages, out, base, a.get("format", "png"),
@@ -979,6 +983,8 @@ class Api:
         paths = [p for p in a.get("paths", []) if os.path.isfile(p)]
         if len(paths) < 2:
             raise SessionError("NEED_TWO")
+        if self.s.dirty and any(self._is_open(p) for p in paths):
+            raise SessionError("SAVE_FIRST")  # its file does not hold the changes on screen yet
         passwords = a.get("passwords") or {}
         for p in paths:  # every owner password first, then where the result goes
             try:
@@ -1057,15 +1063,24 @@ class Api:
     def sign_digital(self, a):
         """Sign the current document with a Digital ID into a new file, then open it."""
         doc = self.s.require()
+        field = a.get("field") or None
+        with self.s.lock:
+            empty = bool(field) and field in {w.field_name for page in doc
+                                              for w in page.widgets(types=[pymupdf.PDF_WIDGET_TYPE_SIGNATURE])
+                                              if not w.is_signed}
+        # the form's own empty signature field is filled in; a new signature field changes the form itself
+        for right in ("form",) if empty else ("modify", "annotate"):
+            self.s.require(right)
         signer = signing.load_signer(a.get("id", ""), a.get("password", ""))
         # an unchanged signed file is signed on top of its own bytes, so earlier signatures stay valid
-        on_top = self.s.signed and not self.s.dirty and bool(self.s.path) and os.path.isfile(self.s.path)
+        original = self.s.original if self.s.copies_as_is else None
+        on_top = original is not None
         known = self.s.protection or {}
         file_pw = (known.get("owner_pw") or known.get("user_pw")) if on_top and self.s.protection else None
         prot = None if on_top else self.s.save_protection()
         labels = a.get("labels") or {}
         name = signing.signer_name(signer)
-        out = self._dialogs.save(self._default_name("signed"), PDF_TYPES, self._dir())
+        out = self._new_file(self._dialogs.save(self._default_name("signed"), PDF_TYPES, self._dir()))
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         reason, location = a.get("reason", ""), a.get("location", "")
@@ -1089,13 +1104,9 @@ class Api:
                 image = settings.signature_bytes(a["sig"]) if a.get("sig") else None
                 ap = signing.appearance_pdf(box[2] - box[0], box[3] - box[1], lines=lines, image=image,
                                             rotate=page.rotation)
-            if on_top:
-                with open(self.s.path, "rb") as f:
-                    base = f.read()
-            else:
-                base = pt.clean_bytes(doc, self.s.fonts_embedded)
+            base = original if on_top else pt.clean_bytes(doc, self.s.fonts_embedded)
         signing.sign_pdf(base, out, signer, page_index=page_index, box=box, appearance_pdf=ap, reason=reason,
-                         location=location, protection=prot, password=file_pw, field_name=a.get("field") or None)
+                         location=location, protection=prot, password=file_pw, field_name=field)
         password = (known.get("user_pw") or file_pw) if on_top else (prot.get("user_pw") if prot else None)
         res = self._open(out, password or None)
         res["path"] = out
@@ -1107,10 +1118,12 @@ class Api:
             self.s.require()
             path = self.s.path
             prot = self.s.protection or {}
-        if not path or not os.path.exists(path):
-            return {"ok": True, "items": []}
-        with open(path, "rb") as f:
-            data = f.read()
+            data = self.s.original  # what was opened, also if the file was replaced since
+        if data is None:
+            if not path or not os.path.exists(path):
+                return {"ok": True, "items": []}
+            with open(path, "rb") as f:
+                data = f.read()
         return {"ok": True, "items": signing.validate(data, prot.get("owner_pw") or prot.get("user_pw")),
                 "dirty": self.s.dirty}
 
