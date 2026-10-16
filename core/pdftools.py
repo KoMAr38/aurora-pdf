@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import logging
 import os
 import re
 from functools import lru_cache
@@ -17,6 +18,8 @@ import pymupdf
 
 from .geom import page_ctm, rgb, rounded, to_insert, to_text, turn
 from .paths import FONT_SANS
+
+log = logging.getLogger("aurora.pdftools")
 
 FONT_NAME = "AuroraSans"  # resource name for the bundled Unicode font (Latin, Cyrillic, Greek)
 
@@ -810,25 +813,39 @@ def compress_to(doc: pymupdf.Document, out_path: str, *, image_dpi: int = 150, q
                 protection: dict | None = None, progress: Progress = None) -> tuple[int, int]:
     """Write a smaller copy: downsample big images, subset fonts, deflate everything.
 
-    Returns the sizes before and after. The session document is not modified. A cancel
-    (``progress`` returning False) stops it before the image pass and before the file is written.
-    shortcut: the image pass itself cannot be stopped (one MuPDF call); run it in a process of its
-    own, as the Word export, if big scans make users wait on it.
+    Returns the sizes before and after. The session document is not modified. The image pass is one
+    MuPDF call, which big scans keep busy for minutes: it runs in a process of its own, so a cancel
+    (``progress`` returning False) stops it too, like the steps before and after it.
     """
-    data = doc.tobytes()
-    tmp = pymupdf.open("pdf", data)
+    data = smaller = doc.tobytes()
+    _tick(progress, 0, 2)
+    if image_dpi:
+        try:  # in memory both ways: a protected document is not written to disk unprotected
+            smaller = _in_process(_images_process, (data, int(image_dpi), int(quality)),
+                                  None if progress is None else lambda _done, _total: progress(0, 2), "the image pass")
+        except RuntimeError:  # shortcut: keep going with lossless savings only
+            log.warning("compress: the image pass failed", exc_info=True)
+    tmp = pymupdf.open("pdf", smaller)
     try:
-        _tick(progress, 0, 2)
-        if image_dpi:
-            try:
-                tmp.rewrite_images(dpi_threshold=int(image_dpi * 1.3), dpi_target=int(image_dpi), quality=int(quality))
-            except Exception:  # shortcut: keep going with lossless savings only
-                pass
         _tick(progress, 1, 2)
         save_pdf(tmp, out_path, compress=True, subset_fonts=True, **protection_args(protection))
     finally:
         tmp.close()
     return len(data), os.path.getsize(out_path)
+
+
+def _images_process(data: bytes, dpi: int, quality: int, conn) -> None:
+    """The child process of :func:`compress_to`: big images made smaller, the PDF sent back."""
+    pymupdf.set_messages(pylogging=True)  # MuPDF warnings into logging: pythonw has no console
+    try:
+        doc = pymupdf.open("pdf", data)
+        doc.rewrite_images(dpi_threshold=int(dpi * 1.3), dpi_target=dpi, quality=quality)
+        conn.send(("done", doc.tobytes()))
+    except Exception as exc:
+        conn.send(("error", f"{type(exc).__name__}: {exc}"))
+        raise SystemExit(1)  # the exit code says it too, in case the message is lost with the pipe
+    finally:
+        conn.close()
 
 
 def export_docx(pdf_path: str, out_path: str, progress: Progress = None, password: str | None = None) -> None:
@@ -838,15 +855,22 @@ def export_docx(pdf_path: str, out_path: str, progress: Progress = None, passwor
     one process: in its own process it leaves the open document free, and a crash in it cannot take
     the app down. ``progress`` returning False stops that process.
     """
+    _in_process(_docx_process, (pdf_path, out_path, password), progress, "the Word export")
+
+
+def _in_process(target, args: tuple, progress: Progress, what: str):
+    """Run ``target(*args, conn)`` in a process of its own, which sends ("progress", done, total), ("done",
+    result) or ("error", text) through ``conn``. Returns the result; ``progress`` returning False stops the
+    process (Cancelled), and an error or a crash in it raises RuntimeError."""
     import multiprocessing
 
     ctx = multiprocessing.get_context("spawn")
     reader, writer = ctx.Pipe(duplex=False)
-    proc = ctx.Process(target=_docx_process, args=(pdf_path, out_path, password, writer), daemon=True)
+    proc = ctx.Process(target=target, args=(*args, writer), daemon=True)
     proc.start()
     writer.close()  # only the child writes now: the end of the pipe is the end of the child
     done = total = 0
-    error = None
+    error = result = None
     piped = True
     try:
         while piped or proc.is_alive():  # until the child is gone: a cancel still stops it if the pipe fails first
@@ -860,6 +884,8 @@ def export_docx(pdf_path: str, out_path: str, progress: Progress = None, passwor
                     piped = False
             if msg and msg[0] == "progress":
                 done, total = msg[1], msg[2]
+            elif msg and msg[0] == "done":
+                result = msg[1]
             elif msg:
                 error = msg[1]
             _tick(progress, done, total)  # also between messages, so a cancel does not wait for the next page
@@ -870,13 +896,12 @@ def export_docx(pdf_path: str, out_path: str, progress: Progress = None, passwor
         proc.join()
         reader.close()
     if error or proc.exitcode:
-        raise RuntimeError(error or f"the Word export stopped (exit code {proc.exitcode})")
+        raise RuntimeError(error or f"{what} stopped (exit code {proc.exitcode})")
+    return result
 
 
 def _docx_process(pdf_path: str, out_path: str, password: str | None, conn) -> None:
     """The child process of :func:`export_docx`: converts, reports pdf2docx's "(3/10)" progress lines."""
-    import logging
-
     class Report(logging.Handler):
         pattern = re.compile(r"\((\d+)/(\d+)\)")
 

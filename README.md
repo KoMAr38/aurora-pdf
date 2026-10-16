@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 269 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 298 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -49,11 +49,11 @@ tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e
 
 Motoren er PyMuPDF, som bygger på MuPDF. pyHanko lager og kontrollerer sertifikatsignaturene, cryptography lager nøklene til de digitale ID-ene, pdf2docx står for Word-eksporten, og Pillow koder sidebildene. Grensesnittet er vanlig HTML, CSS og JavaScript i et WebView2-vindu fra pywebview. Det har ikke noe byggesteg: filene i `web/` er de som kjører.
 
-Koden er rundt 5 300 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS. Testene er 4 800 linjer.
+Koden er rundt 5 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS. Testene er 5 200 linjer.
 
 ### Valg som er verdt å se på
 
-**Grensesnittet henter alt over HTTP.** En lokal server på 127.0.0.1 med et tilfeldig token i adressen leverer sidebildene som JPEG og svarer på kall som JSON. pywebview brukes bare til vinduet, fildialogene, dra-og-slipp og lukking. Serveren kan også startes uten vindu (`main.py --serve`). Da kjører ende-til-ende-testene mot den samme koden som programmet bruker.
+**Grensesnittet henter alt over HTTP.** En lokal server på 127.0.0.1 med et tilfeldig token i adressen leverer sidebildene som JPEG og svarer på kall som JSON. pywebview brukes bare til vinduet, fildialogene, dra-og-slipp og lukking. Serveren kan også startes uten vindu (`main.py --serve`). Da kjører ende-til-ende-testene mot den samme koden som programmet bruker. Grensesnittet sendes med en Content-Security-Policy som bare godtar programmets egne skript. Skulle tekst fra en PDF-fil slippe gjennom som HTML, kan den ikke kjøre kode.
 
 **Den åpne filen er en ukryptert arbeidskopi i minnet.** En passordbeskyttet fil åpnes med passordet og redigeres som andre filer. Beskyttelsen, med algoritme, passord og tillatelser, legges på igjen når filen lagres. Uten eierpassordet kan filen bare lagres som kopi, og kopien får de samme begrensningene.
 
@@ -63,7 +63,7 @@ Koden er rundt 5 300 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 
 **Word-eksporten går i en egen prosess.** PyMuPDF tåler ikke å brukes fra to tråder samtidig, så all bruk går gjennom én lås. Konverteringen til Word kan ta minutter. Den får en kopi av dokumentet og kjører i en egen prosess, så sidene lastes mens den jobber, og «Avbryt» stopper prosessen.
 
-**Beskyttelsen følger med kopiene.** Sider som trekkes ut, deles opp eller komprimeres, får samme passord og tillatelser som dokumentet. En fil med begrensninger kan bare slås sammen med andre eller settes inn i et annet dokument av eieren, siden resultatet ikke får begrensningene med seg. Programmet spør derfor etter eierpassordet til den filen.
+**Beskyttelsen følger med kopiene.** Sider som trekkes ut, deles opp eller komprimeres, får samme passord og tillatelser som dokumentet. En signert kopi beholder også krypteringen dokumentet hadde, AES-256, AES-128 eller RC4. En fil med begrensninger kan bare slås sammen med andre eller settes inn i et annet dokument av eieren, siden resultatet ikke får begrensningene med seg. Programmet spør derfor etter eierpassordet til den filen.
 
 **Kommentarene er vanlige PDF-kommentarer.** Uthevinger, tegninger, figurer og notater lagres som standard PDF-annotasjoner, så andre PDF-lesere viser dem og kan redigere dem.
 
@@ -81,9 +81,9 @@ Koden er rundt 5 300 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 122 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
-| `tests/test_api.py` | 59 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
-| `tests/test_ocr_sign.py` | 16 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
+| `tests/test_engine.py` | 144 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
+| `tests/test_api.py` | 63 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_ocr_sign.py` | 19 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
 | `tests/e2e/test_ui.py` | 68 | Grensesnittet, styrt med mus og tastatur |
 
@@ -97,6 +97,8 @@ Noen av testene:
 - `test_ocr_adds_invisible_text_in_place`: den gjenkjente teksten havner over ordet i bildet, også på roterte sider
 - `test_redaction_removes_comments_fields_and_links_under_the_mark`: det sladdede nummeret finnes ikke noe sted i den lagrede filen, heller ikke i en utheving, et notat, et skjemafelt eller en lenke
 - `test_redaction_reaches_what_a_tagged_file_says_again`: i en tagget fil finnes det sladdede nummeret heller ikke i teksten for kopiering og skjermlesere eller i strukturtreet
+- `test_redaction_takes_only_the_tagged_words_under_the_mark`: i en tagget fil forsvinner bare teksten for kopiering og skjermlesere som hører til innholdet under området, også på roterte sider og i tegninger som siden bruker
+- `test_closing_never_takes_the_document_from_a_job`: lukkes vinduet mens OCR leser en side, stopper jobben etter den siden før dokumentet lukkes
 - `test_what_is_read_shows_where_it_is_on_any_page` og `test_what_is_added_lands_where_it_was_put_on_any_page`: ord, søketreff, lenker, tegninger, vannmerker, sidetall og beskjæring havner der siden viser dem, på sider som er rotert, beskåret, har MediaBox utenfor 0,0, CropBox utenfor MediaBox eller /UserUnit
 - `test_failed_edit_rolls_back`: en endring som feiler, etterlater ingen spor
 - `test_watermark_angle_is_visual`: vinkelen på vannmerket er den brukeren ser, også når siden er rotert
@@ -106,7 +108,7 @@ Noen av testene:
 - `test_long_document_keeps_only_nearby_pages_alive`: i et dokument på 240 sider er høyst tolv sider levende
 - `test_theme_follows_windows_and_the_choice_is_remembered`: temaet følger Windows, og et tema valgt i menyen gjelder foran Windows og etter omstart
 
-`python main.py --selftest` prøver hver del av motoren én gang på en midlertidig fil: visning, kryptering, vannmerke, OCR, signering, Word-eksport, serveren og WebView2. Installasjonen kjører den, og rapporten havner i `%APPDATA%\AuroraPDF\selftest.txt`.
+`python main.py --selftest` prøver hver del av motoren én gang på en midlertidig fil: visning, kryptering, vannmerke, OCR, signering, Word-eksport, komprimering, serveren og WebView2. Installasjonen kjører den, og rapporten havner i `%APPDATA%\AuroraPDF\selftest.txt`.
 
 ### Ytelse
 
@@ -168,6 +170,8 @@ Resten står i `START_HER.md`.
 
 **En tredje gjennomgang og en måling av hvor ting havner på sidene fant ti feil til.** I en tagget PDF ble den sladdede teksten liggende i filen: i teksten som kopiering og skjermlesere bruker (/ActualText og /Alt), og i kommentarer og felt som strukturtreet fortsatt pekte på. I en passordbeskyttet fil ble skjemafeltene lest krypterte, så den første av to signaturer sto som endret, og et endret beløp ble ikke oppdaget. En sladdet radioknapp beholdt valget når knappene delte én tegning, og et skadet angresteg i den midlertidige filen ble lest inn uten feilmelding. Lenkene på alle roterte sider lå et annet sted enn der de ble vist, og sladding på en rotert side kunne fjerne en lenke et annet sted på siden. På en beskåret og rotert skanning havnet OCR-teksten en beskjæringsbredde unna ordene, og det samme gjaldt bildevannmerker. Beskjæring virket ikke på sider der MediaBox ikke begynner i 0,0. Og på sider med en CropBox som går utenfor MediaBox, eller med /UserUnit, havnet tekst, søketreff, tegninger og vannmerker feil. Alle har tester.
 
+**Det som sto igjen etter den tredje gjennomgangen, er rettet.** Sladding fjernet ikke kommentarer som var skrevet rett inn i sidens kommentarliste i stedet for som egne objekter. På en sladdet side i en tagget fil forsvant all tekst for kopiering og skjermlesere, også for innholdet utenfor området. Nå merkes hvert stykke innhold før sladdingen, programmet følger hvor det tegnes, og bare teksten til det som ligger under området, fjernes. På sider med /UserUnit fikk tekstbokser, skjemafelt og strektykkelser feil størrelse. En signert kopi av en fil med AES-128 ble kryptert med AES-256, og komprimering kunne ikke avbrytes mens bildene ble regnet om. Ble vinduet lukket mens OCR leste en side i mer enn ti sekunder, ble dokumentet lukket under jobben. Underveis kom to feil til fram. En fil som hadde fått begrensninger i programmet, kunne ikke signeres. Og strukturtreet i en tagget fil pekte fortsatt på det sladdingen skulle fjerne: de opprinnelige tegningene, der den sladdede teksten lå igjen, bilder som var byttet ut, og tegningene til kommentarer som var fjernet. Alle har tester.
+
 ---
 
 ## Forbehold
@@ -178,7 +182,9 @@ Resten står i `START_HER.md`.
 
 **Tillatelsene håndheves ikke med kryptering.** Passordet for å åpne filen krypterer innholdet. Tillatelsene for utskrift, kopiering og redigering følges av PDF-lesere som respekterer standarden.
 
-**Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området. På en sladdet side i en tagget fil fjernes all alternativ tekst (/ActualText, /Alt og /E), også den som hører til tekst utenfor området.
+**Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området. I en tagget fil fjernes teksten for kopiering og skjermlesere (/ActualText, /Alt og /E) til innhold som berører området, til innhold som ikke tegnes, for eksempel et skjult lag, og til en tegning som brukes flere ganger på siden når én av dem berører området. Kan programmet ikke følge innholdet på en side, fjernes all slik tekst på den siden.
+
+**Et notat på en side med /UserUnit får større ikon enn i andre PDF-lesere.** MuPDF tegner ikonet 16 enheter stort, så med /UserUnit 2 blir det dobbelt så stort på skjermen.
 
 **Rene XFA-skjemaer vises ikke.** Et skjema som bare finnes som XFA (for eksempel fra Adobe LiveCycle), viser bare en venteside, og programmet sier fra når en slik fil åpnes. Et hybridskjema viser de vanlige feltene. XFA-pakken fjernes når feltene endres eller sladdes, slik at Adobe Reader viser det samme som andre lesere.
 

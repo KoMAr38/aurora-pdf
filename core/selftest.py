@@ -1,7 +1,7 @@
 """Installation check: python main.py --selftest
 
 Runs every engine feature once on throw-away documents (render, encryption, watermark,
-OCR, certificate signing, Word export, the local UI server) and writes the result to
+OCR, certificate signing, Word export, compression, the local UI server) and writes the result to
 <data dir>/selftest.txt. Exit code 0 means everything works. Nothing touches the user's
 documents, settings or Digital IDs: signing uses a temporary profile.
 """
@@ -165,6 +165,23 @@ def check_docx(tmp: Path) -> str:
     return f"{out.stat().st_size // 1024} KB"
 
 
+def check_compress(tmp: Path) -> str:
+    import pymupdf
+
+    from . import pdftools as pt
+
+    doc = _sample_doc()
+    big = doc[0].get_pixmap(dpi=200)
+    doc[0].insert_image((50, 120, 370, 440), pixmap=big)  # a big picture to make smaller
+    out = tmp / "small.pdf"
+    before, after = pt.compress_to(doc, str(out))  # its image pass runs in a process of its own
+    with pymupdf.open(out) as small:
+        width = max(img[2] for img in small[0].get_images())
+    if width >= big.width or not after < before:  # without the image pass the copy comes out smaller too
+        raise RuntimeError(f"the image pass did not run: {big.width} -> {width} px, {before} -> {after} bytes")
+    return f"{before // 1024} KB -> {after // 1024} KB"
+
+
 def check_server() -> str:
     from api import Api
 
@@ -222,7 +239,7 @@ def _run(tmp: Path) -> int:
         ("imports", check_imports), ("resources", check_resources), ("render", check_render),
         ("encryption", lambda: check_encryption(tmp)), ("watermark", check_watermark), ("ocr", check_ocr),
         ("signing", lambda: check_signing(tmp)), ("word export", lambda: check_docx(tmp)),
-        ("ui server", check_server), ("webview2", check_webview2),
+        ("compression", lambda: check_compress(tmp)), ("ui server", check_server), ("webview2", check_webview2),
     ]
     lines = [f"Aurora PDF selftest  {time.strftime('%Y-%m-%d %H:%M:%S')}",
              f"Python {sys.version.split()[0]} on {platform.platform()}", ""]

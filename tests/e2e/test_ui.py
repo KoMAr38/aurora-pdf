@@ -212,13 +212,13 @@ def test_long_document_keeps_only_nearby_pages_alive(ui, tmp_path):
     assert ui.js("Aurora.V.pages.length") == 240
     assert ui.js("Aurora.V.pages.filter(p => p.mat).length") <= 12
     ui.js("Aurora.gotoPage(200, false)")
-    ui.page.wait_for_function("Aurora.V.pages[200].mat && Aurora.V.pages[200].info", timeout=20000)
+    ui.page.wait_for_function("() => Aurora.V.pages[200].mat && Aurora.V.pages[200].info", timeout=20000)
     assert ui.js("Aurora.S.current") == 200
     assert ui.page.input_value("#pageIn") == "201"
     alive = ui.js("Aurora.V.pages.map((p, i) => p.mat ? i : -1).filter(i => i >= 0)")
     assert len(alive) <= 12 and all(185 <= i <= 215 for i in alive)
     # sharp image for the visible page arrives at device width
-    ui.page.wait_for_function("Aurora.V.pages[200].hi.classList.contains('ready')", timeout=20000)
+    ui.page.wait_for_function("() => Aurora.V.pages[200].hi.classList.contains('ready')", timeout=20000)
 
 
 def test_zoom_buttons_wheel_and_fit(ui):
@@ -260,7 +260,7 @@ def test_search_highlights_and_steps_through_hits(ui):
     ui.open("report")
     ui.page.click("#search")
     ui.page.keyboard.type("prosent")
-    ui.page.wait_for_function("Aurora.S.search.hits.length > 0", timeout=10000)
+    ui.page.wait_for_function("() => Aurora.S.search.hits.length > 0", timeout=10000)
     n = ui.js("Aurora.S.search.hits.length")
     assert n >= 3
     assert ui.page.inner_text("#searchCount") == f"1/{n}"
@@ -285,7 +285,7 @@ def test_link_leads_to_its_page_after_pages_are_inserted(ui, tmp_path):
     assert len(ui.doc()["pages"]) == 4
     ui.show_page(0)
     ui.page.locator('.pg[data-i="0"] .lk a.link').click()
-    ui.page.wait_for_function("Aurora.S.current === 3", timeout=5000)  # page 3 of the file is the 4th now
+    ui.page.wait_for_function("() => Aurora.S.current === 3", timeout=5000)  # page 3 of the file is the 4th now
 
 
 # ---------------------------------------------------------------- drawing and markup
@@ -351,7 +351,7 @@ def test_text_box_and_sticky_note(ui):
     ui.tool("text")
     ui.click_at(0, 80, 220)
     # the editor takes focus one tick after it appears; typed letters before that are tool shortcuts
-    ui.page.wait_for_function("document.activeElement && document.activeElement.matches('.ft-edit')", timeout=5000)
+    ui.page.wait_for_function("() => document.activeElement?.matches('.ft-edit')", timeout=5000)
     ui.page.keyboard.type("Godkjent – Šabac")
     ui.page.keyboard.press("Control+Enter")
     ui.idle()
@@ -366,7 +366,7 @@ def test_text_box_and_sticky_note(ui):
     notes = [a for a in ui.annots(0) if a["t"] == "Text"]
     assert len(notes) == 1 and notes[0]["txt"] == "Pogledaj ovo"
     # the comments panel lists both
-    ui.page.wait_for_function("document.querySelectorAll('#clist .citem').length === 2", timeout=10000)
+    ui.page.wait_for_function("() => document.querySelectorAll('#clist .citem').length === 2", timeout=10000)
 
 
 def test_select_move_recolor_delete_and_undo(ui):
@@ -508,13 +508,13 @@ def test_the_comments_list_keeps_its_place_when_one_goes(ui, tmp_path):
         ui.js("(i) => Aurora.edit('annot_add', {page: i, kind: 'note', point: [100, 100], text: 'Komentar ' + i})", i)
     ui.idle()
     ui.panel("annotate")
-    ui.page.wait_for_function("document.querySelectorAll('#clist .citem').length === 60", timeout=20000)
+    ui.page.wait_for_function("() => document.querySelectorAll('#clist .citem').length === 60", timeout=20000)
     ui.js("() => { const p = document.querySelector('#panel'); p.scrollTop = p.scrollHeight; }")
     ui.page.wait_for_timeout(200)
     top = ui.js("document.querySelector('#panel').scrollTop")
     assert top > 1000
     ui.js("document.querySelectorAll('#clist .citem')[55].querySelector('[data-del]').click()")
-    ui.page.wait_for_function("document.querySelectorAll('#clist .citem').length === 59", timeout=20000)
+    ui.page.wait_for_function("() => document.querySelectorAll('#clist .citem').length === 59", timeout=20000)
     assert ui.js("document.querySelector('#panel').scrollTop") > top - 150  # one row less, not back at the top
 
 
@@ -646,7 +646,7 @@ def test_handwritten_signature_is_saved_and_placed(ui):
     ui.page.click("#sigNew")
     _draw_signature(ui)
     ui.modal_button(ui.t("saveSignature"))
-    ui.page.wait_for_function("Aurora.S.mode === 'place'", timeout=10000)
+    ui.page.wait_for_function("() => Aurora.S.mode === 'place'", timeout=10000)
     ui.click_at(0, 200, 400)
     ui.idle()
     stamps = [a for a in ui.annots(0) if a["t"] == "Stamp"]
@@ -673,7 +673,7 @@ def test_typed_signature(ui):
     ui.page.fill("#sgName", "Marko Petrović")
     ui.page.click('.fontpick [data-f="1"]')
     ui.modal_button(ui.t("saveSignature"))
-    ui.page.wait_for_function("Aurora.S.mode === 'place'", timeout=10000)
+    ui.page.wait_for_function("() => Aurora.S.mode === 'place'", timeout=10000)
     ui.page.keyboard.press("Escape")
     assert ui.js("Aurora.S.mode") == "select"
     items = ui.rpc("sig_list")["items"]
@@ -763,7 +763,7 @@ def test_protect_with_password_and_reopen(ui):
     out = ui.tmp / "locked.pdf"
     ui.dialogs(out)
     ui.page.click("#doLock")
-    ui.page.wait_for_function("document.querySelectorAll('.toast').length > 0", timeout=15000)
+    ui.page.wait_for_function("() => document.querySelectorAll('.toast').length > 0", timeout=15000)
     d = pymupdf.open(out)
     assert d.needs_pass
     assert d.authenticate("otvori123") == 2
@@ -922,7 +922,7 @@ def test_crop_one_page(ui):
     ui.open("plain")
     ui.panel("organize")
     ui.page.click("#oCrop")
-    ui.page.wait_for_function("Aurora.S.mode === 'crop'")
+    ui.page.wait_for_function("() => Aurora.S.mode === 'crop'")
     ui.settle_layout()
     ui.drag(0, [(40, 50), (380, 300)])
     ui.page.wait_for_selector(".scrim")
@@ -973,7 +973,7 @@ def test_export(ui, kind, check):
     ui.panel("export")
     ui.dialogs(out)
     ui.page.click(f'.excard[data-k="{kind}"]')
-    ui.page.wait_for_function("document.querySelectorAll('.toast').length > 0", timeout=120000)
+    ui.page.wait_for_function("() => document.querySelectorAll('.toast').length > 0", timeout=120000)
     assert out.exists() and out.stat().st_size > 0
     if check:
         assert check in out.read_text(encoding="utf-8")
@@ -987,7 +987,7 @@ def test_export_page_images(ui):
     ui.page.click('#exF [data-v="jpg"]')
     ui.dialogs(folder)
     ui.page.click('.excard[data-k="images"]')
-    ui.page.wait_for_function("document.querySelectorAll('.toast').length > 0", timeout=60000)
+    ui.page.wait_for_function("() => document.querySelectorAll('.toast').length > 0", timeout=60000)
     files = sorted(p.name for p in folder.iterdir())
     assert len(files) == 3 and all(f.endswith(".jpg") for f in files)
 
@@ -996,12 +996,12 @@ def test_combine_files(ui, docs):
     ui.panel("combine")
     ui.dialogs([docs["plain"], docs["report"]])
     ui.page.click("#mPick")
-    ui.page.wait_for_function("document.querySelectorAll('#mList .mrow').length === 2")
+    ui.page.wait_for_function("() => document.querySelectorAll('#mList .mrow').length === 2")
     ui.page.locator("#mList .mrow").nth(1).locator('[data-a="up"]').click()
     out = ui.tmp / "merged.pdf"
     ui.dialogs(out)
     ui.page.click("#mGo")
-    ui.page.wait_for_function("document.querySelectorAll('.toast').length > 0", timeout=20000)
+    ui.page.wait_for_function("() => document.querySelectorAll('.toast').length > 0", timeout=20000)
     d = pymupdf.open(out)
     assert len(d) == 7
     assert "Tredje kvartal" in d[0].get_text()
@@ -1016,7 +1016,7 @@ def test_combining_the_open_file_asks_to_save_it_first(ui, docs):
     ui.page.click("#mCur")
     ui.dialogs([docs["report"]])
     ui.page.click("#mPick")
-    ui.page.wait_for_function("document.querySelectorAll('#mList .mrow').length === 2")
+    ui.page.wait_for_function("() => document.querySelectorAll('#mList .mrow').length === 2")
     ui.page.click("#mGo")
     ui.page.wait_for_function("(t) => [...document.querySelectorAll('.toast .msg')].some(e => e.textContent === t)",
                               arg=ui.t("e_SAVE_FIRST"), timeout=10000)
@@ -1040,13 +1040,13 @@ def test_protected_file_goes_in_with_its_owner_password(ui, docs):
     ui.panel("combine")
     ui.dialogs([docs["report"], str(theirs)])
     ui.page.click("#mPick")
-    ui.page.wait_for_function("document.querySelectorAll('#mList .mrow').length === 2")
+    ui.page.wait_for_function("() => document.querySelectorAll('#mList .mrow').length === 2")
     out = ui.tmp / "merged.pdf"
     ui.dialogs(out)  # asked for after the password
     ui.page.click("#mGo")
     ui.page.fill(".scrim:not(.out) #srcPw", "boss")
     ui.modal_button(ui.t("unlock"))
-    ui.page.wait_for_function("document.querySelectorAll('.toast.good').length > 0", timeout=20000)
+    ui.page.wait_for_function("() => document.querySelectorAll('.toast.good').length > 0", timeout=20000)
     assert len(pymupdf.open(out)) == ours + n
 
 
@@ -1064,7 +1064,7 @@ def test_save_and_unsaved_changes_guard(ui):
     ui.modal_button(ui.t("cancel"))
     assert ui.doc()["path"] == path
     ui.page.keyboard.press("Control+s")
-    ui.page.wait_for_function("!Aurora.S.doc.dirty", timeout=15000)
+    ui.page.wait_for_function("() => !Aurora.S.doc.dirty", timeout=15000)
     assert [a.type[1] for a in pymupdf.open(path)[0].annots()] == ["Square"]
 
 
@@ -1086,7 +1086,7 @@ def test_ctrl_s_saves_what_is_still_being_typed(ui):
     assert {w.field_name: w.field_value for w in pymupdf.open(path)[2].widgets()}["navn"] == "Kari"
     ui.tool("text")
     ui.click_at(2, 300, 460)  # under the signature field
-    ui.page.wait_for_function("document.activeElement && document.activeElement.matches('.ft-edit')", timeout=5000)
+    ui.page.wait_for_function("() => document.activeElement?.matches('.ft-edit')", timeout=5000)
     ui.page.keyboard.type("Hilsen")
     _press_and_wait_for_toast(ui, "Control+s")
     assert not ui.doc()["dirty"]
@@ -1100,7 +1100,7 @@ def test_save_without_a_file_name_goes_on_through_save_as(ui, tmp_path):
     img = tmp_path / "scan.png"
     Image.new("RGB", (300, 400), "white").save(img)
     ui.js("(p) => Aurora.openPath(p, {skipGuard: true})", str(img))
-    ui.page.wait_for_function("Aurora.S.doc && Aurora.S.doc.name === 'scan.pdf'", timeout=15000)
+    ui.page.wait_for_function("() => Aurora.S.doc && Aurora.S.doc.name === 'scan.pdf'", timeout=15000)
     ui.wait_pages()  # else a late request for the page before the rotation gets a 404, which fails the test
     ui.js("Aurora.edit('rotate', {pages: [0], degrees: 90})")
     ui.idle()
@@ -1191,7 +1191,7 @@ def test_closing_without_changes_quits_at_once(ui):
     ui.js("""() => { window.__quit = 0; const rpc = Aurora.rpc;
       Aurora.rpc = (m, p) => m === 'quit' ? (window.__quit++, Promise.resolve({ok: true})) : rpc(m, p);
       Aurora.confirmClose(); }""")
-    ui.page.wait_for_function("window.__quit === 1", timeout=10000)
+    ui.page.wait_for_function("() => window.__quit === 1", timeout=10000)
     assert ui.page.locator(".scrim:not(.out)").count() == 0
 
 
@@ -1216,7 +1216,7 @@ def test_closing_while_a_job_runs_asks_and_stops_it_first(ui):
     assert ui.rpc("state")["jobs"] == []
     ui.page.wait_for_selector(".scrim:not(.out) .job", state="detached", timeout=5000)
     ui.modal_button(ui.t("dontSave"))
-    ui.page.wait_for_function("window.__quit === 1", timeout=5000)
+    ui.page.wait_for_function("() => window.__quit === 1", timeout=5000)
 
 
 def test_save_as_and_recent_files(ui):
@@ -1253,7 +1253,7 @@ def test_print_renders_every_page_into_the_print_frame(ui):
     ui.page.keyboard.press("Control+p")
     ui.page.wait_for_selector(".scrim #prSeg")
     ui.modal_button(ui.t("printGo"))
-    ui.page.wait_for_function("window.__printed === 1", timeout=20000)
+    ui.page.wait_for_function("() => window.__printed === 1", timeout=20000)
     n = ui.js("document.querySelector('#printFrame').contentDocument.querySelectorAll('img').length")
     assert n == 4
     # the words for all pages work in the range field too, and a range past the end stops at the last page.
@@ -1288,7 +1288,7 @@ def test_theme_follows_windows_and_the_choice_is_remembered(ui):
     theme = lambda: ui.js("document.documentElement.dataset.theme")  # noqa: E731
     assert theme() == "dark"
     page.emulate_media(color_scheme="light")  # Windows switches to light apps
-    page.wait_for_function("document.documentElement.dataset.theme === 'light'", timeout=5000)
+    page.wait_for_function("() => document.documentElement.dataset.theme === 'light'", timeout=5000)
     assert ui.js("getComputedStyle(document.body).backgroundColor") == "rgb(243, 246, 250)"
     # the switch in the menu is an explicit choice: it wins over Windows and survives a restart
     page.click("#menuBtn")
@@ -1314,7 +1314,7 @@ def test_night_mode_and_keyboard_tools(ui):
     ui.page.keyboard.press("Escape")
     assert ui.js("Aurora.S.mode") == "select"
     ui.page.keyboard.press("PageDown")
-    ui.page.wait_for_function("Aurora.S.current === 1", timeout=5000)
+    ui.page.wait_for_function("() => Aurora.S.current === 1", timeout=5000)
 
 
 def test_text_from_a_pdf_never_becomes_markup(ui, tmp_path):

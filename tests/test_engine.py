@@ -4,6 +4,7 @@ Rotated pages are checked in display space (what the user sees), because that is
 the v1 engine went wrong. Run: python -m pytest tests
 """
 import os
+import re
 import time
 
 import pymupdf
@@ -498,6 +499,17 @@ def test_compress_shrinks_big_images(tmp_path):
     assert not os.path.exists(stopped)
 
 
+def test_compress_stops_in_the_image_pass(tmp_path):
+    """The image pass is one MuPDF call, which big scans keep busy for minutes, and a cancel waited for it. It
+    runs in a process of its own now, which a cancel stops."""
+    import multiprocessing
+
+    calls, out = [], os.path.join(tmp_path, "stopped.pdf")
+    with pytest.raises(pt.Cancelled):  # yes before the pass, no at the first look while it runs
+        pt.compress_to(make_doc(1), out, progress=lambda done, total: (calls.append(done), len(calls) < 2)[1])
+    assert calls == [0, 0] and not os.path.exists(out) and not multiprocessing.active_children()
+
+
 def test_docx_export(tmp_path):
     pytest.importorskip("pdf2docx")
     src = save_tmp(make_doc(2), tmp_path, "w.pdf")
@@ -696,6 +708,40 @@ def test_serbian_letters_show_in_the_fields():
     assert _fits(_shown(doc, cases[0][0]), cases[0][0], long_name)
     saved = pymupdf.open("pdf", doc.tobytes())
     assert [f["v"] for f in an.page_fields(saved[0])] == [long_name] + [c[2] for c in cases[1:]]
+
+
+@pytest.mark.parametrize("rot", (0, 90))
+def test_sizes_come_as_on_screen_on_a_page_with_a_user_unit(rot):
+    """On a page with /UserUnit 2 a unit of the file is two points on screen. A free text, a frame and a line
+    showed twice as big as asked, the panel read the frame's width back in units of the file, and a field that
+    sizes its text itself got twice the size MuPDF gives it (Č, Ć and Đ take a font that we size)."""
+    seen = []
+    for unit in (1, 2):
+        doc = pymupdf.open()
+        doc.new_page(width=612 / unit, height=792 / unit)  # the same size on screen
+        doc.xref_set_key(doc.page_xref(0), "UserUnit", str(unit))
+        page = doc[0]
+        page.set_rotation(rot)
+        an.add_freetext(page, (60, 60, 400, 120), "HHHH", fontsize=20)
+        sq = an.add_shape(page, "rect", (60, 200, 200, 300), width=4)
+        an.add_shape(page, "line", (250, 250, 400, 250), width=6)
+        field = _field(page, pymupdf.PDF_WIDGET_TYPE_TEXT, "ime", (60, 400, 300, 430))
+        sizes = []
+        for value in ("Durdevac", "Đurđevac"):  # MuPDF sizes the first, we size the second
+            an.set_field(page, field, value)
+            ap = doc.xref_stream(int(doc.xref_get_key(field, "AP/N")[1].split()[0]))
+            sizes.append(float(re.search(rb" ([\d.]+) Tf", ap).group(1)))
+        assert sizes[0] == sizes[1], sizes
+        page = doc[0]
+        pix = page.get_pixmap(dpi=72, alpha=False)
+
+        def dark(xs, ys) -> int:
+            return sum(1 for x in xs for y in ys if sum(pix.pixel(x, y)) < 450)
+
+        info = next(a for a in an.page_annots(page) if a["x"] == sq)
+        seen.append((dark([100], range(60, 120)), dark([130], range(190, 210)), dark([320], range(240, 260)),
+                     info["w"]))
+    assert seen[0] == seen[1] and seen[0][3] == 4, seen
 
 
 def _form_made_elsewhere():
@@ -1081,6 +1127,26 @@ def test_redaction_removes_comments_fields_and_links_under_the_mark(tmp_path):
     assert [a.info["content"] for a in again[0].annots()] == ["langt unna"]
 
 
+@pytest.mark.parametrize("rot", (0, 90))
+@pytest.mark.parametrize("box", tuple(ODD_BOXES))
+def test_redaction_reaches_comments_written_into_the_page_list(box, rot):
+    """Some writers put a comment's dictionary in /Annots itself instead of an object of its own. PyMuPDF does
+    not see those, and the words in one under the mark (and in its pop-up) stayed in the redacted file."""
+    doc, page = _odd_page(box, rot)
+    pop = doc.get_new_xref()
+    doc.update_object(pop, "<</Type/Annot/Subtype/Popup/Rect[400 600 500 700]/Contents(ring 4711)>>")
+    doc.xref_set_key(page.xref, "Annots", f"[<</Type/Annot/Subtype/Text/Rect[205 400 225 420]/Contents(ring 4711)"
+                                          f"/Popup {pop} 0 R>> {pop} 0 R <</Type/Annot/Subtype/Square"
+                                          f"/Rect[220 600 300 650]/Contents(langt unna)>>]")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    page = doc[0]
+    hit = pymupdf.Rect(pt.search_rects(doc, "MARK")[0]["r"])
+    an.mark_redaction(page, hit + (-4, -4, 4, 4))
+    assert an.apply_redactions(doc) == 1
+    out = doc.tobytes(garbage=3, deflate=False, expand=255)
+    assert b"4711" not in out and b"langt unna" in out and "MARK" not in pymupdf.open("pdf", out)[0].get_text()
+
+
 def test_redaction_wipes_the_picture_under_the_mark(tmp_path):
     """Black on top is not enough: the picture's own pixels under the mark go, else any tool takes them out."""
     doc = pymupdf.open()
@@ -1093,6 +1159,27 @@ def test_redaction_wipes_the_picture_under_the_mark(tmp_path):
     saved = pymupdf.open(out)
     pix = pymupdf.Pixmap(saved, saved[0].get_images()[0][0])
     assert pix.pixel(30, 100)[:3] != (220, 30, 30) and pix.pixel(170, 100)[:3] == (220, 30, 30)
+
+
+@pytest.mark.parametrize("rot", (0, 90))
+def test_redaction_wipes_the_shape_a_picture_keeps_in_its_alpha(rot):
+    """A signature on transparent ground keeps its shape in the picture's alpha (/SMask): under the mark that
+    goes too, and the old picture and alpha leave the file."""
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 40, 40), True)
+    for y in range(40):
+        for x in range(40):
+            pix.set_pixel(x, y, (20, 20, 20, 255 if (x // 2 + y // 2) % 2 else 0))
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.set_rotation(rot)
+    page.insert_image((100, 100, 300, 300), stream=pix.tobytes("png"))
+    an.mark_redaction(doc[0], pymupdf.Rect(100, 100, 200, 200) * doc[0].rotation_matrix)  # the top left quarter
+    assert an.apply_redactions(doc) == 1
+    saved = pymupdf.open("pdf", doc.tobytes(garbage=1))
+    alpha = pymupdf.Pixmap(saved, saved[0].get_images(full=True)[0][1])
+    assert {alpha.pixel(x, y)[0] for x in range(20) for y in range(20)} == {255}
+    assert {alpha.pixel(x, y)[0] for x in range(20, 40) for y in range(20)} == {0, 255}  # the rest as it was
+    assert len([x for x in range(1, saved.xref_length()) if saved.xref_get_key(x, "Subtype")[1] == "/Image"]) == 2
 
 
 def test_redaction_takes_a_fields_value_with_its_last_widget(tmp_path):
@@ -1214,6 +1301,155 @@ def test_redaction_reaches_what_a_tagged_file_says_again(tmp_path):
     assert b"12345678901" not in saved.tobytes(garbage=1, deflate=False, expand=255)
     assert b"Kart over Oslo" in saved.tobytes(garbage=1, deflate=False, expand=255)
     assert "Kart over Oslo" in saved[1].get_text()
+
+
+HELV = "/Font<</F9<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>"
+
+
+def _tagged(rot=0, form=False, hidden=False, picture=False):
+    """A tagged page: paragraph 0 says a secret (inside a drawing with ``form``), paragraph 1 does not. Words are
+    said again in marked content (/ActualText inline and in a named list), in the structure elements and around
+    them; ``hidden`` adds a layer that is off, ``picture`` an inline picture under the mark."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    p0 = b"/P <</MCID 0>> BDC BT /F9 12 Tf 72 700 Td (Personnummer 12345678901) Tj ET EMC "
+    xo = ""
+    if form:
+        fx = doc.get_new_xref()
+        doc.update_object(fx, f"<</Type/XObject/Subtype/Form/BBox[0 0 612 792]/Resources<<{HELV}>>/StructParents 1>>")
+        doc.update_stream(fx, b"/P <</MCID 0 /ActualText (Personnummer 12345678901)>> BDC BT /F9 12 Tf 72 700 Td "
+                              b"(Personnummer 12345678901) Tj ET EMC")
+        p0, xo = b"/Fm0 Do ", f"/XObject<</Fm0 {fx} 0 R>>"
+    if hidden:
+        p0 += b"/OC /oc1 BDC /Span <</ActualText (skjult)>> BDC BT /F9 12 Tf 72 400 Td (layer) Tj ET EMC EMC "
+    if picture:
+        p0 += b"q 10 0 0 10 200 700 cm BI /W 2 /H 1 /BPC 8 /CS /G ID \x00\x45\x49\x20 EI Q "
+    c = doc.get_new_xref()
+    doc.update_object(c, "<<>>")
+    doc.update_stream(c, p0 + b"/P <</MCID 1>> BDC BT /F9 12 Tf 72 500 Td (Kart over Oslo) Tj "
+                              b"/Span <</ActualText (fi)>> BDC (fi) Tj EMC ET EMC "
+                              b"/Span /PX BDC BT /F9 12 Tf 72 300 Td (named) Tj ET EMC")
+    doc.xref_set_key(page.xref, "Contents", f"{c} 0 R")
+    oc = ""
+    if hidden:
+        ocg = doc.get_new_xref()
+        doc.update_object(ocg, "<</Type/OCG/Name(skjult)>>")
+        doc.xref_set_key(doc.pdf_catalog(), "OCProperties", f"<</OCGs[{ocg} 0 R]/D<</OFF[{ocg} 0 R]>>>>")
+        oc = f"/oc1 {ocg} 0 R"
+    doc.xref_set_key(page.xref, "Resources", f"<<{HELV}{xo}/Properties<</PX<</ActualText(named prop)>>{oc}>>>>")
+    doc.xref_set_key(page.xref, "StructParents", "0")
+    root, e0, e1, top = (doc.get_new_xref() for _ in range(4))
+    k0 = f"<</Type/MCR/Pg {page.xref} 0 R/Stm {fx} 0 R/MCID 0>>" if form else "0"
+    doc.update_object(e0, f"<</Type/StructElem/S/P/P {top} 0 R/Pg {page.xref} 0 R/K {k0}/Alt(alt 12345678901)"
+                          f"/ActualText(nummer 12345678901)>>")
+    doc.update_object(e1, f"<</Type/StructElem/S/P/P {top} 0 R/Pg {page.xref} 0 R/K 1/Alt(Kart alt)"
+                          f"/ActualText(Kart over Oslo)>>")
+    doc.update_object(top, f"<</Type/StructElem/S/Document/P {root} 0 R/K[{e0} 0 R {e1} 0 R]/Alt(doc 12345678901)>>")
+    nums = f"0 [null {e1} 0 R] 1 [{e0} 0 R]" if form else f"0 [{e0} 0 R {e1} 0 R]"
+    doc.update_object(root, f"<</Type/StructTreeRoot/K {top} 0 R/ParentTree<</Nums[{nums}]>>>>")
+    doc.xref_set_key(doc.pdf_catalog(), "StructTreeRoot", f"{root} 0 R")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    doc[0].set_rotation(rot)
+    return doc
+
+
+def _redact_secret(doc, pno=0):
+    box = pymupdf.Rect(next(r["r"] for r in pt.search_rects(doc, "12345678901") if r["p"] == pno))
+    an.mark_redaction(doc[pno], box + (-2, -2, 2, 2))
+    assert an.apply_redactions(doc) == 1
+    return doc.tobytes(garbage=1, deflate=False, expand=255)
+
+
+@pytest.mark.parametrize("case", (dict(), dict(rot=90), dict(form=True), dict(rot=270, form=True), dict(hidden=True),
+                                  dict(picture=True)))
+def test_redaction_takes_only_the_tagged_words_under_the_mark(case):
+    """A tagged page says its words again, for copying and screen readers. What it says for content under a mark
+    goes, also in the elements around it; what it says for the rest of the page stays. The tree points at a
+    drawing by object, and pointed at the original after MuPDF drew the page from a copy: the original, with the
+    words under the mark, stayed in the file. A hidden layer stays hidden."""
+    doc = _tagged(**case)
+    raw = _redact_secret(doc)
+    assert b"12345678901" not in raw
+    for kept in (b"Kart over Oslo", b"Kart alt", b"/ActualText (fi)", b"(named prop)"):
+        assert kept in raw, kept
+    assert b"aurora-" not in raw and b"AuroraCopyOf" not in raw
+    words = doc[0].get_text().split()
+    assert "Kart" in words and "prop" in words and "layer" not in words and "skjult" not in words
+    if case.get("form"):
+        mcr = next(x for x in range(1, doc.xref_length()) if doc.xref_get_key(x, "K/Type")[1] == "/MCR")
+        assert int(doc.xref_get_key(mcr, "K/Stm")[1].split()[0]) == doc.get_page_xobjects(0)[0][0]
+
+
+def test_redaction_leaves_drawings_and_lists_that_other_pages_share():
+    """Two pages draw one drawing and name one property list. Redacting page 1 takes the words from what page 1
+    draws; page 2 still says them."""
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page(width=612, height=792)
+    fx, plist, res = doc.get_new_xref(), doc.get_new_xref(), doc.get_new_xref()
+    doc.update_object(fx, f"<</Type/XObject/Subtype/Form/BBox[0 0 612 792]/Resources<<{HELV}>>>>")
+    doc.update_stream(fx, b"/Span <</ActualText (felles 4711)>> BDC BT /F9 12 Tf 72 700 Td (felles) Tj ET EMC")
+    doc.update_object(plist, "<</ActualText (navn 4711)>>")
+    doc.update_object(res, f"<<{HELV}/XObject<</Fm0 {fx} 0 R>>/Properties<</PX {plist} 0 R>>>>")
+    for pno in range(2):
+        c = doc.get_new_xref()
+        doc.update_object(c, "<<>>")
+        doc.update_stream(c, b"/Fm0 Do /Span /PX BDC BT /F9 12 Tf 72 680 Td (navn) Tj ET EMC")
+        doc.xref_set_key(doc.page_xref(pno), "Contents", f"{c} 0 R")
+        doc.xref_set_key(doc.page_xref(pno), "Resources", f"{res} 0 R")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.mark_redaction(doc[0], (60, 80, 200, 120))
+    assert an.apply_redactions(doc) == 1
+    assert "4711" not in doc[0].get_text() and doc[1].get_text().split() == ["felles", "4711", "navn", "4711"]
+    raw = doc.tobytes(garbage=1, deflate=False, expand=255)
+    assert raw.count(b"4711") == 2 and b"aurora-" not in raw  # once in the drawing, once in the list: page 2's
+
+
+def test_redaction_takes_a_tagged_picture_from_the_tree():
+    """The tree can point at a picture by object. MuPDF draws a picture under a mark from a new one without the
+    pixels, and the tree kept the old one, with all its pixels, in the file. The words for the other picture
+    stay."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    for r, color in (((100, 100, 200, 200), (220, 30, 30, 255)), ((300, 100, 400, 200), (30, 30, 220, 255))):
+        page.insert_image(r, stream=png_bytes(40, 40, color, mark=False))
+    pics = [x[0] for x in page.get_images(full=True)]
+    assert len(set(pics)) == 2
+    root, figs = doc.get_new_xref(), [doc.get_new_xref() for _ in pics]
+    for fig, pic, alt in zip(figs, pics, ("bilde 4711", "bilde langt unna")):
+        doc.update_object(fig, f"<</Type/StructElem/S/Figure/P {root} 0 R/Pg {page.xref} 0 R/Alt({alt})"
+                               f"/K<</Type/OBJR/Obj {pic} 0 R>>>>")
+    doc.update_object(root, f"<</Type/StructTreeRoot/K[{' '.join(f'{f} 0 R' for f in figs)}]>>")
+    doc.xref_set_key(doc.pdf_catalog(), "StructTreeRoot", f"{root} 0 R")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.mark_redaction(doc[0], (100, 100, 150, 200))  # half of the first picture
+    assert an.apply_redactions(doc) == 1
+    saved = pymupdf.open("pdf", doc.tobytes(garbage=1))
+    raw = saved.tobytes(garbage=1, deflate=False, expand=255)
+    assert b"4711" not in raw and b"bilde langt unna" in raw
+    pictures = {x for x in range(1, saved.xref_length()) if saved.xref_get_key(x, "Subtype")[1] == "/Image"}
+    assert pictures == {x for img in saved[0].get_images(full=True) for x in img[:2] if x}  # and their masks
+
+
+def test_redaction_takes_a_tagged_comments_drawing_from_the_tree():
+    """The tree can point into the drawing of a comment (/Stm with /StmOwn). With the comment under a mark gone,
+    that pointer kept its drawing, words and all, in the file."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    a = page.add_freetext_annot((100, 100, 300, 140), "ring 4711", fontsize=12)
+    a.update()
+    ap = int(doc.xref_get_key(a.xref, "AP/N")[1].split()[0])
+    doc.update_stream(ap, b"/P <</MCID 0>> BDC " + doc.xref_stream(ap) + b" EMC")
+    root, elem = doc.get_new_xref(), doc.get_new_xref()
+    mcr = f"<</Type/MCR/Stm {ap} 0 R/StmOwn {a.xref} 0 R/MCID 0>>"
+    doc.update_object(elem, f"<</Type/StructElem/S/P/P {root} 0 R/Pg {page.xref} 0 R/Alt(ring 4711)"
+                            f"/K[{mcr} <</Type/OBJR/Obj {a.xref} 0 R>>]>>")
+    doc.update_object(root, f"<</Type/StructTreeRoot/K {elem} 0 R>>")
+    doc.xref_set_key(doc.pdf_catalog(), "StructTreeRoot", f"{root} 0 R")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.mark_redaction(doc[0], (90, 90, 310, 150))
+    assert an.apply_redactions(doc) == 1
+    assert b"4711" not in doc.tobytes(garbage=1, deflate=False, expand=255)
 
 
 @pytest.mark.parametrize("src, want", (

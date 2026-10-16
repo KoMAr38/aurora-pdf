@@ -81,9 +81,10 @@ class Jobs:
         with self._lock:
             return [j.as_dict() for j in self._jobs.values() if j.state == "running"]
 
-    def stop_all(self, timeout: float = 10.0) -> None:
+    def stop_all(self, timeout: float = 10.0) -> bool:
         """Cancel every running job and give them ``timeout`` seconds to end: the program is closing, and a job
-        cleans up after itself (the Word export's decrypted copy in the temp folder) on its way out."""
+        cleans up after itself (the Word export's decrypted copy in the temp folder) on its way out. True when
+        every one has ended."""
         with self._lock:
             running = [j for j in self._jobs.values() if j.state == "running"]
         for j in running:
@@ -91,3 +92,4 @@ class Jobs:
         end = time.monotonic() + timeout
         for j in running:
             j.thread.join(max(0.0, end - time.monotonic()))
+        return not any(j.thread.is_alive() for j in running)

@@ -91,7 +91,7 @@ def script_dialogs(page, answers: list) -> None:
 
 def open_pdf(page, path: str) -> None:
     page.evaluate("(p) => Aurora.openPath(p, {skipGuard: true})", str(path))
-    page.wait_for_function("Aurora.S.doc && Aurora.S.doc.open", timeout=15000)
+    page.wait_for_function("() => Aurora.S.doc && Aurora.S.doc.open", timeout=15000)
     settle(page)
 
 

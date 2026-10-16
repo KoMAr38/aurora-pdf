@@ -206,7 +206,7 @@
     const frame = $("#printFrame");
     A.busy(true);
     const onMsg = (e) => {
-      if (!e.data || !e.data.auroraPrintReady) return;
+      if (e.origin !== location.origin || !e.data || !e.data.auroraPrintReady) return;
       window.removeEventListener("message", onMsg);
       A.busy(false);
       try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (err) { A.toast(A.t("e_ERROR"), "bad"); }

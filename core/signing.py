@@ -223,6 +223,7 @@ def sign_pdf(
     """
     from pyhanko import stamp
     from pyhanko.pdf_utils.crypt.permissions import StandardPermissions
+    from pyhanko.pdf_utils.crypt.standard import StandardSecurityHandler, StandardSecuritySettingsRevision
     from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
     from pyhanko.pdf_utils.reader import PdfFileReader
     from pyhanko.pdf_utils.writer import copy_into_new_writer
@@ -238,12 +239,20 @@ def sign_pdf(
         auth_pw = owner_pw
         w = copy_into_new_writer(PdfFileReader(io.BytesIO(data)))
         perms = protection.get("perms")
-        kw = {"pdf_mac": False}
+        # bits 7, 8 and 13-32 set, 1 and 2 not, as the PDF rules ask (MuPDF does so when it saves): with bit 13
+        # unset pyHanko wants a MAC (ISO/TS 32004), which it does not make here, and the signing failed
+        kw = {}
         if perms is not None and perms != -1:
-            kw["perms"] = StandardPermissions.from_uint(perms & 0xFFFFFFFF)
-        # shortcut: the signed copy is AES-256 also when the document had AES-128 (pyHanko makes new files
-        # only so, and cannot sign on top of MuPDF's encryption); revisit if very old readers must open it
-        w.encrypt(owner_pw, user_pw, **kw)
+            kw["perms"] = StandardPermissions.from_uint((perms | 0xFFFFF0C0) & 0xFFFFFFFC)
+        algorithm = protection.get("algorithm")
+        if algorithm in ("aes128", "rc4"):  # as the document had it, for the readers that cannot open AES-256
+            # pyHanko writes new files with AES-256 only (and cannot sign on top of MuPDF's encryption): this is
+            # what its encrypt() does, with its handler for the older kinds
+            w._assign_security_handler(StandardSecurityHandler.build_from_pw_legacy(
+                StandardSecuritySettingsRevision.RC4_OR_AES128, w.document_id[0], owner_pw, user_pw,
+                use_aes128=algorithm == "aes128", **kw))
+        else:
+            w.encrypt(owner_pw, user_pw, pdf_mac=False, **kw)
         buf = io.BytesIO()
         w.write(buf)
         data = buf.getvalue()

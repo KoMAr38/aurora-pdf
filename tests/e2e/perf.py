@@ -34,7 +34,7 @@ def main() -> None:
         page.on("request", lambda r: "/page/" in r.url and requests.append(r.url))
         t0 = page.evaluate("performance.now()")
         page.evaluate("(p) => Aurora.openPath(p, {skipGuard: true})", big)
-        page.wait_for_function("Aurora.V.pages[0] && Aurora.V.pages[0].hi && Aurora.V.pages[0].hi.classList.contains('ready')", timeout=30000)
+        page.wait_for_function("() => Aurora.V.pages[0]?.hi?.classList.contains('ready')", timeout=30000)
         print(f"open 400 pages -> first sharp page: {page.evaluate('performance.now()') - t0:.0f} ms")
 
         times = page.evaluate(SCROLL_JS, [30, 240])[5:]
@@ -50,7 +50,7 @@ def main() -> None:
 
         t0 = page.evaluate("performance.now()")
         page.evaluate("Aurora.gotoPage(350, false)")
-        page.wait_for_function("Aurora.V.pages[350].hi && Aurora.V.pages[350].hi.classList.contains('ready')", timeout=30000)
+        page.wait_for_function("() => Aurora.V.pages[350].hi?.classList.contains('ready')", timeout=30000)
         print(f"jump to page 351 -> sharp after {page.evaluate('performance.now()') - t0:.0f} ms")
         print("live pages:", page.evaluate("Aurora.V.pages.filter(p => p.mat).length"), "errors:", page.errors)
 

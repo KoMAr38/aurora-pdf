@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import functools
 import re
+import secrets
 from typing import Sequence
 
 import pymupdf
 
-from .geom import display_angle, hexcolor, point_to_unrot, rect_to_unrot, rgb, rounded, to_pdf, turn, vec_to_unrot
+from .geom import (display_angle, hexcolor, page_ctm, point_to_unrot, rect_to_unrot, rgb, rounded, size_unit, to_pdf,
+                   turn, vec_to_unrot)
 from .pdftools import _prepare_png
 
 SKIP_TYPES = {pymupdf.PDF_ANNOT_POPUP, pymupdf.PDF_ANNOT_LINK, pymupdf.PDF_ANNOT_WIDGET}
@@ -113,7 +115,7 @@ def annot_info(page: pymupdf.Page, a: pymupdf.Annot) -> dict:
         "c": hexcolor(stroke) or hexcolor(fill),
         "f": hexcolor(fill),
         "o": round(op, 2) if op is not None and op >= 0 else 1,
-        "w": (a.border or {}).get("width") or 0,
+        "w": round(((a.border or {}).get("width") or 0) / size_unit(page), 2),  # as on screen, /UserUnit or not
         "txt": info.get("content", "") if info.get("name") != "ImageStamp" else "",
         "by": info.get("title", ""),
         "dt": info.get("modDate") or info.get("creationDate") or "",
@@ -176,7 +178,7 @@ def page_fields(page: pymupdf.Page) -> list[dict]:
             "r": rounded(pymupdf.Rect(w.rect) * m),
             "v": w.field_value if w.field_value is not None else "",
             "ro": bool(flags & FF_READONLY),
-            "fs": w.text_fontsize or 0,
+            "fs": round((w.text_fontsize or 0) / size_unit(page), 2),
         }
         if kind in ("check", "radio"):  # as its drawing shows it: two widgets of a field can differ
             d["v"] = page.parent.xref_get_key(w.xref, "AS")[1] not in ("null", "/Off")
@@ -229,8 +231,8 @@ def _finish(annot: pymupdf.Annot, author: str, *, stroke=None, fill=None, width=
             opacity=None, content=None, update: bool = True) -> int:
     if stroke is not None or fill is not None:
         annot.set_colors(stroke=stroke, fill=fill)
-    if width is not None:
-        annot.set_border(width=width)
+    if width is not None:  # sizes come as on screen, the file keeps them in units of its page (/UserUnit)
+        annot.set_border(width=width * size_unit(annot.parent))
     if opacity is not None and opacity < 1:
         annot.set_opacity(opacity)
     now = pymupdf.get_pdf_now()
@@ -326,13 +328,15 @@ def add_freetext(page, rect: Sequence[float], text: str, *, fontsize=12.0, color
         raise ValueError("empty text")
     r = rect_to_unrot(rect, page)
     a = page.add_freetext_annot(
-        r, text, fontsize=fontsize, fontname="helv", text_color=rgb(color),
+        r, text, fontsize=fontsize * size_unit(page), fontname="helv", text_color=rgb(color),
         fill_color=rgb(fill) if fill else None, rotate=page.rotation,
     )
     return _finish(a, author)
 
 
 def add_note(page, point: Sequence[float], text: str, *, color="#facc15", author="") -> int:
+    # shortcut: MuPDF draws a note's icon 16 units big whatever its /Rect, flags or drawing say, so on a page with
+    # a /UserUnit it shows that many times bigger; other readers keep such an icon one size on screen anyway
     a = page.add_text_annot(point_to_unrot(point, page), text or "", icon="Comment")
     return _finish(a, author, stroke=rgb(color), content=text or "")
 
@@ -371,16 +375,16 @@ def apply_redactions(doc: pymupdf.Document) -> int:
     A field whose last widget goes loses its value, which its parent object keeps, a radio
     or check box group whose chosen button goes loses that choice, and a hybrid form loses
     its XFA packet, which holds every value and word of the form again. A tagged page says
-    its words again for copying and screen readers: that text goes on a redacted page too.
+    its words again for copying and screen readers: what it says for content under a mark goes too.
     """
-    n, heads, gone, pages = 0, set(), set(), set()
+    n, heads, gone, pages, under, unsure, moved, pictures = 0, set(), set(), set(), {}, set(), {}, set()
     for page in doc:
         marks = [pymupdf.Rect(a.rect) for a in page.annots(types=[pymupdf.PDF_ANNOT_REDACT])]
         if not marks:
             continue
         n += len(marks)
         pages.add(page.xref)
-        before = {x for x, _, _ in doc.page_annot_xrefs(page.number)}
+        before = {x for x, _, _ in doc.page_annot_xrefs(page.number) if x}  # 0: written into /Annots itself
 
         def hit(r) -> bool:
             return any(pymupdf.Rect(r).intersects(m) for m in marks)
@@ -391,11 +395,29 @@ def apply_redactions(doc: pymupdf.Document) -> int:
         heads |= {_field_object(doc, x) for x in widgets} - set(widgets)
         for xref in widgets:
             page.delete_widget(page.load_widget(xref))
+        _drop_inline(doc, page, hit)
+        plan = _alt_under(doc, page, marks)  # before MuPDF rewrites the page, while the words are there
+        forms, images = _drawings(doc, page.number)
+        for xref in forms:  # MuPDF draws the page from copies of its drawings, which keep this key
+            doc.xref_set_key(xref, _COPY_OF, str(xref))
         # MuPDF removes the links that touch a mark (a check of our own read their display rects as unrotated
         # and took links elsewhere on a turned page)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS, graphics=1, text=0)
-        gone |= before - {x for x, _, _ in doc.page_annot_xrefs(page.number)}
-        _drop_alt_text(doc, page)
+        copies, shown = _drawings(doc, page.number)
+        for xref in copies | forms:
+            kind, orig = doc.xref_get_key(xref, _COPY_OF)
+            if xref in copies and kind == "int":
+                moved.setdefault((page.xref, int(orig)), xref)
+            pymupdf.mupdf.pdf_dict_dels(pymupdf.mupdf.pdf_load_object(pymupdf._as_pdf_document(doc), xref), _COPY_OF)
+        pictures |= {(page.xref, x) for x in images - shown}  # MuPDF put a picture without the pixels in its place
+        gone |= before - {x for x, _, _ in doc.page_annot_xrefs(page.number) if x}
+        said = None if plan is None else _alt_settle(doc, page, plan)
+        if said is None:  # some marked content could not be placed: all the page says again goes
+            _drop_alt_text(doc, page)
+            unsure.add(page.xref)
+        else:
+            for key, drop in said.items():
+                under[key] = under.get(key, False) or drop
     if heads:
         fields = _fields_of(doc)
         for field in heads:
@@ -416,11 +438,52 @@ def apply_redactions(doc: pymupdf.Document) -> int:
         # a tagged file points at its comments and fields from the structure tree, which keeps their objects
         # (and the words in them) in the file after they left the page: empty them
         left = {x for pno in range(len(doc)) for x, _, _ in doc.page_annot_xrefs(pno)}
+        streams = set().union(*(_appearances(doc, x) for x in gone - left))  # what drew them
         for xref in gone - left - set(_fields_of(doc)):  # a widget can be the field of widgets left elsewhere
             doc.update_object(xref, "<<>>")
-        _drop_structure_text(doc, pages, gone)
+        _drop_structure_text(doc, pages, under, unsure, gone | streams, moved, pictures)
         _drop_xfa(doc)
     return n
+
+
+_COPY_OF = "AuroraCopyOf"  # on a drawing for the length of one redaction: the xref it was copied from
+
+
+def _drawings(doc, pno: int) -> tuple[set[int], set[int]]:
+    """The xrefs of the drawings (form XObjects) and of the pictures a page uses, also inside its drawings."""
+    return {x[0] for x in doc.get_page_xobjects(pno)}, {x[0] for x in doc.get_page_images(pno, full=True)}
+
+
+def _appearances(doc, xref: int) -> set[int]:
+    """The streams that draw a comment or field: its /AP entries, one per state where it has states."""
+    out = set()
+    for kind in ("N", "D", "R"):
+        how, value = doc.xref_get_key(xref, "AP/" + kind)
+        if how in ("xref", "dict"):
+            out |= {int(x) for x in re.findall(r"(\d+) 0 R", value)}
+    return out
+
+
+def _drop_inline(doc, page, hit) -> None:
+    """Comments, fields and links written into /Annots itself, not as objects of their own (against the PDF
+    rules), are out of PyMuPDF's reach: the ones under a mark leave the page's list, with their pop-ups."""
+    m = pymupdf.mupdf
+    annots = m.pdf_dict_get(m.pdf_load_object(pymupdf._as_pdf_document(doc), page.xref), m.PDF_ENUM_NAME_Annots)
+    seen = page_ctm(page) * page.derotation_matrix  # PDF space -> the space annotation rects are read in
+    popups = set()
+    for i in reversed(range(m.pdf_array_len(annots))):
+        obj = m.pdf_array_get(annots, i)
+        if m.pdf_is_indirect(obj) or not m.pdf_is_dict(obj):
+            continue
+        if hit(pymupdf.Rect(m.pdf_to_rect(m.pdf_dict_get(obj, m.PDF_ENUM_NAME_Rect))) * seen):
+            popups.add(m.pdf_to_num(m.pdf_dict_get(obj, m.PDF_ENUM_NAME_Popup)))
+            m.pdf_array_delete(annots, i)
+    popups.discard(0)
+    for i in reversed(range(m.pdf_array_len(annots))):  # a pop-up can repeat its parent's words
+        if m.pdf_to_num(m.pdf_array_get(annots, i)) in popups:
+            m.pdf_array_delete(annots, i)
+    for xref in popups:
+        doc.update_object(xref, "<<>>")
 
 
 _ALT_KEYS = ("ActualText", "Alt", "E")  # words a reader copies or reads aloud in place of the glyphs
@@ -428,6 +491,7 @@ _ALT_HINT = re.compile(rb"/(?:ActualText|Alt|E)[\s(<\[/]")
 _ALT_NAMES = {b"/" + k.encode() for k in _ALT_KEYS}
 _WS = b" \t\r\n\f\x00"
 _TOKEN_END = re.compile(rb"[\s()<>\[\]{}/%]")
+_EOL = re.compile(rb"[\r\n]")
 
 
 def _object_end(data: bytes, i: int) -> int:
@@ -473,6 +537,308 @@ def _object_end(data: bytes, i: int) -> int:
     return m.start() if m else len(data)
 
 
+def _picture_end(data: bytes, j: int) -> int:
+    """After the ID of an inline picture: the index after the EI, between white space, that ends its data."""
+    k = j + 1
+    while True:
+        k = data.find(b"EI", k)
+        if k < 0 or (data[k - 1] in _WS and data[k + 2:k + 3] in (b"", b" ", b"\n", b"\r", b"\t")):
+            break
+        k += 2
+    return len(data) if k < 0 else k + 2
+
+
+def _operators(data: bytes):
+    """Each operator of a content stream with the spans of its operands: (operator, [(start, end), ...]).
+    Strings, arrays, dictionaries and inline picture data are stepped over whole, comments skipped."""
+    i, args = 0, []
+    while i < len(data):
+        c = data[i]
+        if c in _WS:
+            i += 1
+        elif c == 0x25:
+            m = _EOL.search(data, i)
+            i = m.start() if m else len(data)
+        else:
+            j = _object_end(data, i)
+            if c in b"/([<+-.0123456789" or data[i:j] in (b"true", b"false", b"null"):
+                args.append((i, j))
+            else:
+                yield data[i:j], args
+                args = []
+                if data[i:j] == b"ID":
+                    j = _picture_end(data, j)
+            i = j
+
+
+def _entries(data: bytes, s: int, e: int) -> list[tuple[bytes, int, int, int]]:
+    """The entries of the dictionary data[s:e] (with its << >>) as (key, key start, value start, value end)."""
+    out, i, e = [], s + 2, e - 2
+    while i < e:
+        if data[i] in _WS:
+            i += 1
+            continue
+        if data[i] == 0x25:
+            m = _EOL.search(data, i)
+            i = m.start() if m else e
+            continue
+        k = _object_end(data, i)
+        v = k
+        while v < e and data[v] in _WS:
+            v += 1
+        end = _object_end(data, v) if v < e else v
+        out.append((data[i:k], i, v, end))
+        i = end
+    return out
+
+
+class _Trace(pymupdf.mupdf.FzDevice2):
+    """Where everything a page draws lands, per marked content our own /ActualText (``tag`` + a number) names."""
+
+    def __init__(self, tag: str):
+        super().__init__()
+        for name in ("fill_text", "stroke_text", "clip_text", "clip_stroke_text", "ignore_text", "fill_path",
+                     "stroke_path", "fill_image", "fill_image_mask", "clip_image_mask", "fill_shade",
+                     "begin_metatext", "end_metatext"):
+            getattr(self, "use_virtual_" + name)()
+        self.tag, self.open, self.begun, self.boxes = tag, [], set(), {}
+
+    def begin_metatext(self, ctx, meta, text):
+        k = int(text[len(self.tag):]) if text and text.startswith(self.tag) else None
+        if k is not None:
+            self.begun.add(k)
+        self.open.append(k)
+
+    def end_metatext(self, ctx):
+        if self.open:
+            self.open.pop()
+
+    def _drawn(self, r) -> None:
+        box = pymupdf.Rect(r.x0, r.y0, r.x1, r.y1)
+        for k in self.open:
+            if k is not None:
+                self.boxes[k] = self.boxes[k] | box if k in self.boxes else box
+
+    def fill_text(self, ctx, text, ctm, *args):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_text(text, None, ctm))
+
+    def stroke_text(self, ctx, text, stroke, ctm, *args):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_text(text, stroke, ctm))
+
+    def clip_text(self, ctx, text, ctm, scissor):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_text(text, None, ctm))
+
+    def clip_stroke_text(self, ctx, text, stroke, ctm, scissor):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_text(text, stroke, ctm))
+
+    def ignore_text(self, ctx, text, ctm):  # invisible text, as an OCR layer has
+        self._drawn(pymupdf.mupdf.ll_fz_bound_text(text, None, ctm))
+
+    def fill_path(self, ctx, path, even_odd, ctm, *args):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_path(path, None, ctm))
+
+    def stroke_path(self, ctx, path, stroke, ctm, *args):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_path(path, stroke, ctm))
+
+    def fill_image(self, ctx, image, ctm, *args):
+        unit = pymupdf.mupdf.FzRect(pymupdf.mupdf.FzRect.Fixed_UNIT)
+        self._drawn(pymupdf.mupdf.ll_fz_transform_rect(unit.internal(), ctm))
+
+    def fill_image_mask(self, ctx, image, ctm, *args):
+        self.fill_image(ctx, image, ctm)
+
+    def clip_image_mask(self, ctx, image, ctm, *args):
+        self.fill_image(ctx, image, ctm)
+
+    def fill_shade(self, ctx, shade, ctm, *args):
+        self._drawn(pymupdf.mupdf.ll_fz_bound_shade(shade, ctm))
+
+
+def _drawn_ops(doc, page):
+    """Each operator the page draws with, in its own content and in the drawings (form XObjects) that uses, inside
+    each other too: (stream xref, owner, resources, data, operator, operand spans). owner: the page or drawing the
+    marked-content numbers (MCID) of the stream belong to."""
+    m = pymupdf.mupdf
+    pdf = pymupdf._as_pdf_document(doc)
+    res = m.pdf_dict_get_inheritable(m.pdf_load_object(pdf, page.xref), m.PdfObj(m.PDF_ENUM_NAME_Resources))
+    todo, seen = [(x, page.xref, res) for x in reversed(page.get_contents())], set()
+    while todo:
+        xref, owner, res = todo.pop()
+        if xref in seen:
+            continue
+        seen.add(xref)
+        data = doc.xref_stream(xref)
+        for op, args in _operators(data):
+            if op == b"Do" and args:
+                form = _resource(res, "XObject", data, args[-1])
+                if m.pdf_is_indirect(form) and m.pdf_to_name(m.pdf_dict_gets(form, "Subtype")) == "Form":
+                    own = m.pdf_dict_gets(form, "Resources")
+                    todo.append((m.pdf_to_num(form), m.pdf_to_num(form), own if m.pdf_is_dict(own) else res))
+            yield xref, owner, res, data, op, args
+
+
+def _alt_under(doc, page, marks: list) -> dict | None:
+    """Before a redaction: tell which marked content (BDC) on the page and in the drawings it uses touches a mark
+    with its drawing, or draws nothing. For one run of the page every marked content says an /ActualText of our
+    own, which tells where its drawing lands. That /ActualText stays through the redaction: MuPDF draws the page
+    from copies of its content and drawings, in which _alt_settle finds it again. Returns that plan; None, with
+    the page as it was, when some marked content was not reached (hidden, or read otherwise than MuPDF reads it):
+    the caller then takes out all the page says again."""
+    m = pymupdf.mupdf
+    tag = f"aurora-{secrets.token_hex(6)}-"
+    # places: (stream xref, (start, end) of its << >>) or (None, named property list), with owner and MCID
+    plan = dict(tag=tag, places=[], said={}, texts={}, original={}, edits={}, drop=[])
+    places, said, texts, original, edits = (plan[k] for k in ("places", "said", "texts", "original", "edits"))
+    lists, trace = set(), None
+    try:
+        for xref, owner, res, data, op, args in _drawn_ops(doc, page):
+            original.setdefault(xref, data)
+            if op != b"BDC" or len(args) < 2:
+                continue
+            s, e = args[-1]
+            if data.startswith(b"<<", s):
+                found = {key: data[v:z] for key, _, v, z in _entries(data, s, e)}
+                mcid = found.get(b"/MCID", b"")
+                texts[len(places)] = found.get(b"/ActualText")
+                places.append((xref, (s, e), owner, int(mcid) if mcid.isdigit() else None))
+            elif data[s] == 0x2F and data[args[0][0]:args[0][1]] != b"/OC":  # /OC names a layer, not a list
+                props = _resource(res, "Properties", data, (s, e))
+                key = m.pdf_to_num(props) or props.m_internal_value()  # one place per list, however it is reached
+                if m.pdf_is_dict(props) and key not in lists and \
+                        m.pdf_to_name(m.pdf_dict_gets(props, "Type")) not in ("OCG", "OCMD"):
+                    lists.add(key)
+                    text, mcid = m.pdf_dict_gets(props, "ActualText"), m.pdf_dict_gets(props, "MCID")
+                    said[len(places)] = m.pdf_deep_copy_obj(text) if m.pdf_is_string(text) else None
+                    places.append((None, props, owner, m.pdf_to_int(mcid) if m.pdf_is_int(mcid) else None))
+        for k, (xref, where, _, _) in enumerate(places):
+            if xref is None:
+                m.pdf_dict_puts(where, "ActualText", m.pdf_new_text_string(tag + str(k)))
+            else:
+                data, (s, e) = original[xref], where
+                inner = b" ".join(data[a:z] for key, a, _, z in _entries(data, s, e) if key != b"/ActualText")
+                ours = b"<</ActualText(" + (tag + str(k)).encode() + b") " + inner + b">>"
+                edits.setdefault(xref, []).append((s, e, ours))
+        for xref, spans in edits.items():
+            doc.update_stream(xref, _splice(original[xref], spans))
+        if places:
+            trace = _Trace(tag)
+            mt = page.derotation_matrix  # the space marks and annotations are read in
+            m.fz_run_page_contents(m.FzPage(pymupdf._as_pdf_page(page)), trace,
+                                   m.FzMatrix(mt.a, mt.b, mt.c, mt.d, mt.e, mt.f), m.FzCookie())
+            m.fz_close_device(trace)
+        if places and not all(k in trace.begun for k in range(len(places))):
+            trace = None
+    except Exception:  # content this reader does not follow: the caller takes out all the page says again
+        trace = None
+    if places and trace is None:
+        _alt_restore(doc, plan)
+        return None
+    plan["drop"] = [k not in trace.boxes or any((trace.boxes[k] + (-0.5, -0.5, 0.5, 0.5)).intersects(r) for r in marks)
+                    for k in range(len(places))]
+    return plan
+
+
+def _alt_restore(doc, plan: dict, keep=frozenset()) -> None:
+    """Our /ActualText out of the originals again: each stream we changed as it was, except the ones the page
+    draws now (``keep``), and each named property list with its own /ActualText back."""
+    m = pymupdf.mupdf
+    for xref in plan["edits"]:
+        if xref not in keep:
+            doc.update_stream(xref, plan["original"][xref])
+    for k, text in plan["said"].items():
+        props = plan["places"][k][1]
+        if text is None:
+            m.pdf_dict_dels(props, "ActualText")
+        else:
+            m.pdf_dict_puts(props, "ActualText", m.pdf_deep_copy_obj(text))
+
+
+def _alt_settle(doc, page, plan: dict) -> dict | None:
+    """After the redaction: the page now draws copies of its content and drawings, which still say our
+    /ActualText. In them, marked content that touched a mark loses its /ActualText, /Alt and /E, and the rest
+    gets its own /ActualText back. The originals, which other pages and comments can draw too, are put back as
+    they were. Returns, for each marked-content number (page or original drawing xref, MCID), whether its words
+    went; None when some of our /ActualText was not found again (the caller then takes out all the page says)."""
+    m = pymupdf.mupdf
+    tag, places, drop = plan["tag"], plan["places"], plan["drop"]
+    if not places:
+        return {}
+    ours = re.compile(re.escape(tag.encode()) + rb"(\d+)")
+    spans, holders, local = {}, [], set()
+    for xref, _, res, data, op, args in _drawn_ops(doc, page):
+        if xref not in local:
+            local.add(xref)
+            holders.append(res)
+        if op != b"BDC" or len(args) < 2 or not data.startswith(b"<<", args[-1][0]):
+            continue
+        s, e = args[-1]
+        k = ours.search(data, s, e)
+        if k is None or int(k.group(1)) >= len(places):
+            continue
+        k = int(k.group(1))
+        keep = [data[a:z] for key, a, _, z in _entries(data, s, e)
+                if key != b"/ActualText" and not (drop[k] and key in _ALT_NAMES)]
+        if not drop[k] and plan["texts"].get(k) is not None:
+            keep.insert(0, b"/ActualText " + plan["texts"][k])
+        spans.setdefault(xref, (data, []))[1].append((s, e, b"<<" + b" ".join(keep) + b">>"))
+    for res in holders:  # property lists named in the resources (/Span /P1 BDC): the copy gets lists of its own
+        props = m.pdf_dict_gets(res, "Properties") if m.pdf_is_dict(res) else m.PdfObj()
+        for i in range(m.pdf_dict_len(props) if m.pdf_is_dict(props) else 0):
+            entry = m.pdf_dict_get_val(props, i)
+            text = m.pdf_dict_gets(entry, "ActualText") if m.pdf_is_dict(entry) else m.PdfObj()
+            said = m.pdf_to_text_string(text).encode("latin-1", "replace") if m.pdf_is_string(text) else b""
+            k = ours.fullmatch(said)
+            if k is None or int(k.group(1)) not in plan["said"]:
+                continue
+            k = int(k.group(1))
+            own = m.pdf_copy_dict(entry)
+            m.pdf_dict_dels(own, "ActualText")
+            if drop[k]:
+                for key in _ALT_KEYS:
+                    m.pdf_dict_dels(own, key)
+            elif plan["said"][k] is not None:
+                m.pdf_dict_puts(own, "ActualText", m.pdf_deep_copy_obj(plan["said"][k]))
+            m.pdf_dict_put(props, m.pdf_dict_get_key(props, i), own)
+    _alt_restore(doc, plan, local)
+    for xref, (data, edits) in spans.items():
+        doc.update_stream(xref, _splice(data, edits))
+    hint = tag.encode()
+    for xref in local:  # none of ours may stay, written in any way
+        data = doc.xref_stream(xref)
+        if hint in data or hint.hex().encode() in data.lower():
+            return None
+    for res in holders:
+        props = m.pdf_dict_gets(res, "Properties") if m.pdf_is_dict(res) else m.PdfObj()
+        for i in range(m.pdf_dict_len(props) if m.pdf_is_dict(props) else 0):
+            text = m.pdf_dict_gets(m.pdf_dict_get_val(props, i), "ActualText")
+            if m.pdf_is_string(text) and m.pdf_to_text_string(text).startswith(tag):
+                return None
+    under = {}
+    for k, (_, _, owner, mcid) in enumerate(places):
+        if mcid is not None:
+            under[owner, mcid] = under.get((owner, mcid), False) or drop[k]
+    return under
+
+
+def _resource(res, kind: str, data: bytes, span: tuple[int, int]):
+    """What the name operand data[span] stands for in the ``kind`` dictionary (XObject, Properties) of ``res``."""
+    m = pymupdf.mupdf
+    if not m.pdf_is_dict(res):
+        return m.PdfObj()
+    raw = re.sub(rb"#([0-9A-Fa-f]{2})", lambda g: bytes([int(g.group(1), 16)]), data[span[0] + 1:span[1]])
+    return m.pdf_dict_gets(m.pdf_dict_gets(res, kind), raw.decode("latin-1"))
+
+
+def _splice(data: bytes, spans: list) -> bytes:
+    """``data`` with each (start, end, new bytes) of ``spans`` put in place of what it covers."""
+    out, last = [], 0
+    for s, e, new, *_ in sorted(spans):
+        out += [data[last:s], new]
+        last = e
+    out.append(data[last:])
+    return b"".join(out)
+
+
 def _strip_alt(data: bytes) -> bytes:
     """A content stream without the /ActualText, /Alt and /E entries of its property lists (the << >> of BDC):
     keys only, with their values. Strings, arrays and inline image data are stepped over whole."""
@@ -484,7 +850,7 @@ def _strip_alt(data: bytes) -> bytes:
         if c in _WS:
             i += 1
         elif c == 0x25:  # a comment runs to the end of the line
-            m = re.compile(rb"[\r\n]").search(data, i)
+            m = _EOL.search(data, i)
             i = m.start() if m else len(data)
         elif data.startswith(b"<<", i):
             if keys:
@@ -506,13 +872,7 @@ def _strip_alt(data: bytes) -> bytes:
             elif keys:
                 keys[-1] = not keys[-1]
             elif data[i:j] == b"ID" and data[j:j + 1] in (b" ", b"\n", b"\r"):
-                k = j + 1  # inline image data runs to an EI between white space
-                while True:
-                    k = data.find(b"EI", k)
-                    if k < 0 or (data[k - 1] in _WS and data[k + 2:k + 3] in (b"", b" ", b"\n", b"\r", b"\t")):
-                        break
-                    k += 2
-                j = len(data) if k < 0 else k + 2
+                j = _picture_end(data, j)
             i = j
     out.append(data[last:])
     return b"".join(out)
@@ -533,30 +893,55 @@ def _drop_alt_text(doc, page) -> None:
         if clean != data:
             doc.update_stream(xref, clean)
         holders.append(m.pdf_dict_gets(m.pdf_load_object(pdf, xref), "Resources"))
-    for res in holders:  # property lists named in the resources (/Span /P1 BDC)
-        props = m.pdf_dict_gets(res, "Properties") if m.pdf_is_dict(res) else None
+    for res in holders:  # property lists named in the resources (/Span /P1 BDC), which other pages can name too:
+        props = m.pdf_dict_gets(res, "Properties") if m.pdf_is_dict(res) else None  # the page gets its own
         if props is None or not m.pdf_is_dict(props):
             continue
         for i in range(m.pdf_dict_len(props)):
             entry = m.pdf_dict_get_val(props, i)
-            if m.pdf_is_dict(entry):
+            if m.pdf_is_dict(entry) and any(m.pdf_dict_gets(entry, key).m_internal for key in _ALT_KEYS):
+                own = m.pdf_copy_dict(entry)
                 for key in _ALT_KEYS:
-                    m.pdf_dict_dels(entry, key)
+                    m.pdf_dict_dels(own, key)
+                m.pdf_dict_put(props, m.pdf_dict_get_key(props, i), own)
 
 
-def _drop_structure_text(doc, pages: set[int], objs: set[int]) -> None:
+def _drop_structure_text(doc, pages: set[int], under: dict, unsure: set[int], objs: set[int], moved: dict,
+                         pictures: set) -> None:
     """The structure tree of a tagged file says the words of its elements again (/ActualText, /Alt, /E): take them
-    out of every element with content on a redacted page (``pages``, page xrefs) or pointing at a removed comment
-    or field (``objs``), and out of the elements around it."""
+    out of every element with marked content on a redacted page (``pages``, xrefs) that ``under`` says goes or
+    does not know, or on a page in ``unsure``, or pointing at a removed comment or field or what drew it
+    (``objs``), at a picture that lost pixels (``pictures``: (page, picture) xrefs) or at a whole drawing on a
+    redacted page, and out of the elements around it. ``under``: (page or drawing xref, MCID) -> whether its
+    drawing touched a mark.
+    The tree names drawings and pictures by object, which keeps them in the file, with all that was under a mark:
+    it is pointed at the copy the page draws now instead (``moved``: (page, drawing) -> copy), and away from a
+    removed comment's drawing or a changed picture."""
     m = pymupdf.mupdf
     pdf = pymupdf._as_pdf_document(doc)
     root = m.pdf_dict_getp(m.pdf_trailer(pdf), "Root/StructTreeRoot")
     if not m.pdf_is_dict(root):
         return
-    seen = set()
+    seen, traced, anywhere, drawn = set(), pages | {x for _, x in moved} | {o for o, _ in under}, {}, []
+    changed = {x for _, x in pictures}
+    for (_, old), new in moved.items():
+        anywhere.setdefault(old, new)
 
     def num(obj) -> int:
         return m.pdf_to_num(obj) if m.pdf_is_indirect(obj) else 0
+
+    def still(xref: int) -> bool:  # does some page draw it, read once when asked
+        if not drawn:
+            drawn.append(set().union(*(set().union(*_drawings(doc, pno)) for pno in range(len(doc)))))
+        return xref in drawn[0]
+
+    def copy(on: int, xref: int) -> int:  # what a page draws in place of drawing xref (the page unknown: no page)
+        return moved.get((on, xref)) or (anywhere[xref] if xref in anywhere and not still(xref) else 0)
+
+    def goes(owner: int, pg: int, mcid: int) -> bool:
+        if pg in unsure or owner in objs:
+            return True
+        return pg in pages and owner in traced and under.get((owner, mcid), True)  # untraced: a comment that stays
 
     def clean(elem) -> None:
         for key in _ALT_KEYS:
@@ -567,37 +952,65 @@ def _drop_structure_text(doc, pages: set[int], objs: set[int]) -> None:
             if num(node) in seen:
                 return
             seen.add(num(node))
-        own = m.pdf_dict_gets(node, "Pg")
-        pg = num(own) or pg
+        pg = num(m.pdf_dict_gets(node, "Pg")) or pg
         path = path + [node]
-        hit = pg in pages
-        kids = m.pdf_dict_gets(node, "K")
-        items = [m.pdf_array_get(kids, i) for i in range(m.pdf_array_len(kids))] if m.pdf_is_array(kids) else [kids]
-        for item in items:
+        hit, kids = False, m.pdf_dict_gets(node, "K")
+        many = m.pdf_is_array(kids)
+        items = [m.pdf_array_get(kids, i) for i in range(m.pdf_array_len(kids))] if many else [kids]
+        out = []  # kids that point at what left the file
+        for i, item in enumerate(items):
+            if m.pdf_is_int(item):  # a marked-content number on pg
+                hit = hit or goes(pg, pg, m.pdf_to_int(item))
+                continue
             if not m.pdf_is_dict(item):
-                continue  # a marked-content number: content on pg
+                continue
             kind = m.pdf_to_name(m.pdf_dict_gets(item, "Type"))
-            if kind in ("MCR", "OBJR"):
-                hit = hit or (num(m.pdf_dict_gets(item, "Pg")) or pg) in pages or num(m.pdf_dict_gets(item, "Obj")) in objs
+            on = num(m.pdf_dict_gets(item, "Pg")) or pg
+            if kind == "MCR":
+                stm, owner = num(m.pdf_dict_gets(item, "Stm")), num(m.pdf_dict_gets(item, "StmOwn"))
+                hit = hit or goes(stm or on, on, m.pdf_to_int(m.pdf_dict_gets(item, "MCID"))) or owner in objs
+                if stm in objs or owner in objs:
+                    out.append(i)
+                elif stm and copy(on, stm):
+                    m.pdf_dict_puts(item, "Stm", m.pdf_new_indirect(pdf, copy(on, stm), 0))
+            elif kind == "OBJR":
+                obj = num(m.pdf_dict_gets(item, "Obj"))
+                # shortcut: a whole drawing on a redacted page counts as under a mark; telling would take where
+                # each drawing lands
+                hit = hit or on in unsure or obj in objs or (on, obj) in pictures or (on, obj) in moved
+                if (on, obj) in pictures or (obj in changed and not still(obj)):
+                    out.append(i)
+                elif obj and copy(on, obj):
+                    m.pdf_dict_puts(item, "Obj", m.pdf_new_indirect(pdf, copy(on, obj), 0))
             else:
                 walk(item, pg, path)
+        for i in reversed(out):
+            if many:
+                m.pdf_array_delete(kids, i)
+            else:
+                m.pdf_dict_dels(node, "K")
         if hit:
             for elem in path:
                 clean(elem)
 
     walk(root, 0, [])
-    # elements the tree does not reach still sit in the file through the parent tree
-    for page_xref in pages:
-        key = m.pdf_dict_gets(m.pdf_load_object(pdf, page_xref), "StructParents")
-        if m.pdf_is_int(key):
-            entry = m.pdf_lookup_number(m.pdf_dict_gets(root, "ParentTree"), m.pdf_to_int(key))
-            elems = [m.pdf_array_get(entry, i) for i in range(m.pdf_array_len(entry))] if m.pdf_is_array(entry) else [entry]
-            for elem in elems:
-                for _ in range(64):  # the element and the ones around it, up to the root
-                    if not m.pdf_is_dict(elem) or m.pdf_to_num(elem) == num(root):
-                        break
-                    clean(elem)
-                    elem = m.pdf_dict_gets(elem, "P")
+    # elements the tree does not reach still sit in the file through the parent tree, by page or drawing
+    for owner in traced | unsure | objs:
+        if not 0 < owner < doc.xref_length():
+            continue
+        key = m.pdf_dict_gets(m.pdf_load_object(pdf, owner), "StructParents")
+        if not m.pdf_is_int(key):
+            continue
+        entry = m.pdf_lookup_number(m.pdf_dict_gets(root, "ParentTree"), m.pdf_to_int(key))
+        elems = [m.pdf_array_get(entry, i) for i in range(m.pdf_array_len(entry))] if m.pdf_is_array(entry) else [entry]
+        for mcid, elem in enumerate(elems):
+            if not (owner in unsure or owner in objs or under.get((owner, mcid), owner in traced)):
+                continue
+            for _ in range(64):  # the element and the ones around it, up to the root
+                if not m.pdf_is_dict(elem) or m.pdf_to_num(elem) == num(root):
+                    break
+                clean(elem)
+                elem = m.pdf_dict_gets(elem, "P")
 
 
 def count_redactions(doc: pymupdf.Document) -> int:
@@ -675,7 +1088,7 @@ def resize_annot(page, xref: int, rect: Sequence[float]) -> None:
     if r.width < 4 or r.height < 4:
         raise ValueError("too small")
     if a.type[0] in BORDERED:  # set_rect takes the inner box; the border grows it back
-        w = ((a.border or {}).get("width") or 0) / 2
+        w = ((a.border or {}).get("width") or 0) / size_unit(page) / 2
         r = pymupdf.Rect(r.x0 + w, r.y0 + w, r.x1 - w, r.y1 - w)
     a.set_rect(r)
     if a.info.get("name") != "ImageStamp":
@@ -696,7 +1109,7 @@ def edit_annot(page, xref: int, *, content=None, color=None, opacity=None, width
     if opacity is not None:
         a.set_opacity(float(opacity))
     if width is not None and t not in MARKUP_TYPES | {pymupdf.PDF_ANNOT_FREE_TEXT, pymupdf.PDF_ANNOT_TEXT}:
-        a.set_border(width=float(width))
+        a.set_border(width=float(width) * size_unit(page))
     a.set_info(modDate=pymupdf.get_pdf_now(), **({"title": author} if author is not None else {}))
     if a.info.get("name") != "ImageStamp":
         a.update()
@@ -766,7 +1179,8 @@ def _auto_size(doc, w, kind: str, text: str) -> float:
     also on a tie, hence the point to spare."""
     if kind == "list" or w.field_flags & FF_MULTILINE:
         return 12.0
-    width, height = w.rect.width, w.rect.height
+    unit = size_unit(w.parent)  # the rect as on screen, the size in units of the page (/UserUnit)
+    width, height = w.rect.width * unit, w.rect.height * unit
     if doc.xref_get_key(w.xref, "MK/R")[1] in ("90", "270"):
         width, height = height, width
     b = w.border_width or 1

@@ -70,8 +70,13 @@ def to_text(page: pymupdf.Page) -> tuple[pymupdf.Matrix, float]:
     """Display space -> the point insert_text takes (it adds the CropBox position as written and turns y over at
     the MediaBox height), and the factor that turns a size on screen into the size to write (/UserUnit)."""
     cb, mb = page.cropbox_position, page.mediabox_size
+    return ~page_ctm(page) * ~pymupdf.Matrix(1, 0, 0, -1, cb.x, mb.y - cb.y), size_unit(page)
+
+
+def size_unit(page: pymupdf.Page) -> float:
+    """The factor that turns a size on screen (font size, line width) into the size to write: 1 / the /UserUnit."""
     ctm = page_ctm(page)
-    return ~ctm * ~pymupdf.Matrix(1, 0, 0, -1, cb.x, mb.y - cb.y), 1 / math.sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
+    return 1 / math.sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
 
 
 def display_angle(direction: Sequence[float], page: pymupdf.Page) -> int:

@@ -10,7 +10,9 @@ so neither web pages nor other local programs can drive it.
 """
 from __future__ import annotations
 
+import base64
 import collections
+import hashlib
 import json
 import logging
 import re
@@ -136,16 +138,34 @@ class AppServer:
         return data
 
 
-PRINT_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Print</title><style>
+# The pages load nothing but the app's own files and API: a file that slips markup into the interface (a
+# comment, a file name) cannot run script or send anything elsewhere. The interface's own markup sets style
+# attributes (colours, widths), hence 'unsafe-inline' for styles only.
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; "
+       "connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
+PRINT_STYLE = """
 @page{margin:0}html,body{margin:0;background:#fff}
 .p{break-after:page;page-break-after:always;height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .p:last-child{break-after:auto;page-break-after:auto}
 img{max-width:100%;max-height:100vh;object-fit:contain;display:block}
-</style></head><body>__PAGES__<script>
+"""
+PRINT_SCRIPT = """
 var imgs=[].slice.call(document.images),left=imgs.length;
 function done(){if(--left<=0){parent.postMessage({auroraPrintReady:true},location.origin);}}
 if(!left)done();imgs.forEach(function(i){if(i.complete)done();else{i.onload=done;i.onerror=done;}});
-</script></body></html>"""
+"""
+PRINT_HTML = (f'<!doctype html><html><head><meta charset="utf-8"><title>Print</title><style>{PRINT_STYLE}</style>'
+              f"</head><body>__PAGES__<script>{PRINT_SCRIPT}</script></body></html>")
+
+
+def _sha(text: str) -> str:
+    return "'sha256-" + base64.b64encode(hashlib.sha256(text.encode()).digest()).decode() + "'"
+
+
+# the print page is framed by the interface and runs only its own style and script, named by their hash
+PRINT_CSP = (f"default-src 'none'; script-src {_sha(PRINT_SCRIPT)}; style-src {_sha(PRINT_STYLE)}; img-src 'self'; "
+             "base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -167,6 +187,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", cache)
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")  # every address holds the secret token
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -211,7 +232,8 @@ class _Handler(BaseHTTPRequestHandler):
             width = max(200, min(int((q.get("w") or ["1400"])[0]), 4000))
             revs = [int(r) for r in (q.get("revs") or [""])[0].split(",") if r.isdigit()]
             pages = "".join(f'<div class="p"><img src="page/{r}/{width}.jpg"></div>' for r in revs)
-            return self._send(200, PRINT_HTML.replace("__PAGES__", pages).encode(), "text/html; charset=utf-8")
+            return self._send(200, PRINT_HTML.replace("__PAGES__", pages).encode(), "text/html; charset=utf-8",
+                              headers={"Content-Security-Policy": PRINT_CSP})
         return self._static(path or "index.html")
 
     def _static(self, rel: str):
@@ -224,11 +246,11 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(404)
         st = target.stat()
         etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        mime = MIME.get(target.suffix.lower(), "application/octet-stream")
+        headers = {"ETag": etag, **({"Content-Security-Policy": CSP} if target.suffix.lower() == ".html" else {})}
         if self.headers.get("If-None-Match") == etag:
-            return self._send(304, b"", MIME.get(target.suffix.lower(), "application/octet-stream"), "no-cache",
-                              {"ETag": etag})
-        return self._send(200, target.read_bytes(), MIME.get(target.suffix.lower(), "application/octet-stream"),
-                          "no-cache", {"ETag": etag})
+            return self._send(304, b"", mime, "no-cache", headers)
+        return self._send(200, target.read_bytes(), mime, "no-cache", headers)
 
     def do_POST(self):
         rest = self._route()

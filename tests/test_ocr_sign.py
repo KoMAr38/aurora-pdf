@@ -150,6 +150,24 @@ def test_sign_protected_and_tamper(tmp_path):
     assert not res or res[0]["status"] != "valid"
 
 
+@pytest.mark.parametrize("algorithm", ("aes128", "rc4", "aes256"))
+def test_a_signed_copy_keeps_the_kind_of_protection(tmp_path, algorithm):
+    """The signed copy of a protected document is protected the way the document was: it was AES-256 always,
+    which readers older than PDF 2.0 cannot open. Passwords and permissions stay too; permissions set in the app
+    lacked the bits the PDF rules keep set, and pyHanko then wanted a MAC and the signing failed."""
+    ident = signing.create_id("Ana", "pw12345")
+    out = os.path.join(tmp_path, "s.pdf")
+    perms = pt.permissions_int([p for p in pt.ALL_PERMS if p != "modify"])
+    prot = {"user_pw": "open1", "owner_pw": "own1", "perms": perms, "algorithm": algorithm}
+    signing.sign_pdf(make_doc(1).tobytes(), out, signing.load_signer(ident["id"], "pw12345"), protection=prot)
+    d = pymupdf.open(out)
+    assert pt._algorithm(pt._encrypt_dict(d)) == algorithm
+    assert d.authenticate("open1") == 2 and pymupdf.open(out).authenticate("own1") == 4
+    assert not d.permissions & pymupdf.PDF_PERM_MODIFY and d.permissions & pymupdf.PDF_PERM_PRINT
+    res = _signed_ok(out, "open1")
+    assert res and res[0]["status"] == "valid", res
+
+
 def test_a_protected_copy_of_a_signed_file_has_a_broken_signature(tmp_path):
     """Changing the protection rewrites the whole file, so the UI asks first; the copy shows why."""
     ident = signing.create_id("Ana", "pw12345")

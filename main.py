@@ -188,10 +188,19 @@ def main() -> int:
     try:
         run_window(api, server)
     finally:
-        api._jobs.stop_all()  # before the document goes: OCR works on it
-        session.close()
-        server.stop()
+        shutdown(api, session, server)
     return 0
+
+
+def shutdown(api: Api, session: Session, server: AppServer, wait: float = 60.0) -> None:
+    """The window is gone: stop the jobs, then let the document go. A job stops after the page it is on (OCR
+    reads one for seconds). One still running after ``wait`` keeps the document to the end of the process:
+    after that page it would go on with the document closed under it."""
+    if api._jobs.stop_all(wait):
+        session.close()
+    else:
+        logging.getLogger("aurora").warning("a job did not stop in time: its document stays open to the end")
+    server.stop()
 
 
 if __name__ == "__main__":

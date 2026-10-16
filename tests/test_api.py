@@ -4,6 +4,7 @@ Native dialogs are replaced by a scripted queue (Dialogs.script), everything els
 production code path: Api.dispatch -> Session -> engine, and real HTTP for the server.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -719,6 +720,22 @@ def test_digital_signing_flow(api, tmp_path):
 
 
 
+@pytest.mark.parametrize("algorithm", ("aes256", "aes128"))
+def test_a_file_protected_here_can_be_signed(api, tmp_path, algorithm):
+    """Protect the open file, then sign it: the permissions set here lacked the bits the PDF rules keep set,
+    pyHanko then wanted a MAC and the signing failed. The signed copy keeps the kind of protection."""
+    _, src = opened(api, tmp_path)
+    answers(api, src)  # the protect dialog picks the open file itself
+    ok(call(api, "save_protected", user_pw="tajna", owner_pw="gazda", allowed=["print", "form"], algorithm=algorithm))
+    ident = ok(call(api, "id_create", name="Marko Test", password="pw1234"))["id"]
+    out = str(tmp_path / "signed.pdf")
+    answers(api, out)
+    ok(call(api, "sign_digital", id=ident, password="pw1234", page=0, rect=[200, 300, 380, 360]))
+    d = pymupdf.open(out)
+    assert pt._algorithm(pt._encrypt_dict(d)) == algorithm and d.authenticate("tajna")
+    assert _statuses(out, "tajna") == ["valid"]
+
+
 def _signed_file(tmp_path, name, protection=None):
     ident = signing.create_id("Ana Første", "pw1234")
     out = str(tmp_path / name)
@@ -949,6 +966,35 @@ def test_the_install_check_reaches_the_app_past_a_proxy(monkeypatch):
     assert "127.0.0.1" in selftest.check_server()
 
 
+@pytest.mark.parametrize("stuck", (False, True))
+def test_closing_never_takes_the_document_from_a_job(api, tmp_path, stuck):
+    """The window closes while OCR reads a page. The job stops after that page, then the document closes; a job
+    still on its page after the wait keeps the document, which it would otherwise find closed after that page."""
+    import threading
+    import types
+
+    import main
+
+    opened(api, tmp_path)
+    reading, go_on = threading.Event(), threading.Event()
+
+    def one(page):  # one page of OCR, which takes its time
+        reading.set()
+        go_on.wait(10)
+        return False
+
+    job = api._jobs.start("ocr", lambda job: api.s.run_pages("ocr", [0, 1, 2], one, progress=job.progress))
+    assert reading.wait(5)
+    if not stuck:
+        threading.Timer(0.2, go_on.set).start()
+    stopped = []
+    main.shutdown(api, api.s, types.SimpleNamespace(stop=lambda: stopped.append(True)), wait=1.0)
+    assert stopped and (api.s.doc is not None) == stuck
+    go_on.set()
+    api._jobs.stop_all()
+    assert api._jobs.status(job)["state"] == "cancelled"  # after its page, not in an error on a closed document
+
+
 def test_theme_setting_and_title_bar(api, tmp_path, monkeypatch):
     """The theme is saved, a bad value is refused, and the page's choice reaches the title bar."""
     import main
@@ -1038,6 +1084,10 @@ def test_http_server(tmp_path):
         base = srv.url
         code, body, hdr = http(base)
         assert code == 200 and b"Aurora" in body and "text/html" in hdr["Content-Type"]
+        # markup slipped into the interface (a file name, a comment) runs no script, sends nothing elsewhere
+        csp = hdr["Content-Security-Policy"]
+        assert "default-src 'none'" in csp and "script-src 'self';" in csp and "frame-ancestors 'none'" in csp
+        assert hdr["Referrer-Policy"] == "no-referrer"  # every address holds the secret token
         assert http(f"http://127.0.0.1:{srv.port}/wrongtoken/")[0] == 404
         assert http(base + "../core/session.py")[0] == 404
         # API: JSON only, same origin only
@@ -1055,8 +1105,12 @@ def test_http_server(tmp_path):
         info = json.loads(body)
         assert code == 200 and any(w[5] == "marker-2" for w in info["words"])
         assert http(base + "page/99999999/600.jpg")[0] == 404
-        code, body, _ = http(base + f"print?revs={rev}&w=800")
+        code, body, hdr = http(base + f"print?revs={rev}&w=800")
         assert code == 200 and f"page/{rev}/800.jpg".encode() in body
+        for tag in ("script", "style"):  # the print page's own script and style, named in its policy by their hash
+            inline = re.search(rf"<{tag}>(.*?)</{tag}>".encode(), body, re.S).group(1)
+            digest = base64.b64encode(hashlib.sha256(inline).digest()).decode()
+            assert f"'sha256-{digest}'" in hdr["Content-Security-Policy"]
         # a request for another host name is refused (DNS rebinding)
         req = urllib.request.Request(base, headers={"Host": "evil.example"})
         with pytest.raises(urllib.error.HTTPError):
@@ -1067,10 +1121,19 @@ def test_http_server(tmp_path):
 
 
 def test_selftest_passes(tmp_path, monkeypatch):
-    """The installation check 1_INSTALLER.bat ends with runs clean on a working setup."""
-    from core import selftest
+    """The installation check 1_INSTALLER.bat ends with runs clean on a working setup. It also tells when the image
+    pass of compression could not run in its process: compression then goes on without it, and the copy still
+    comes out smaller."""
+    from core import pdftools, selftest
 
     monkeypatch.setenv("AURORA_DATA_DIR", str(tmp_path))
     assert selftest.run() == 0
     report = (tmp_path / "selftest.txt").read_text(encoding="utf-8")
     assert "All checks passed." in report and "FAIL" not in report
+
+    def no_process(*args):
+        raise RuntimeError("the image pass stopped (exit code 1)")
+
+    monkeypatch.setattr(pdftools, "_in_process", no_process)
+    with pytest.raises(RuntimeError, match="image pass did not run"):
+        selftest.check_compress(tmp_path)
