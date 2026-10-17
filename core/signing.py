@@ -200,6 +200,18 @@ def signer_name(signer) -> str:
 # --- signing --------------------------------------------------------------------
 
 
+def _pdfdoc(*passwords: str) -> bool:
+    """Whether the passwords have a PDFDocEncoding form, which AES-128 and RC4 take (AES-256 takes UTF-8)."""
+    from pyhanko.pdf_utils.generic import encode_pdfdocencoding
+
+    try:
+        for pw in passwords:
+            encode_pdfdocencoding(pw or "")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def sign_pdf(
     pdf_bytes: bytes,
     out_path: str,
@@ -222,6 +234,7 @@ def sign_pdf(
     (e.g. one with earlier signatures, which must stay byte for byte). Returns the field name.
     """
     from pyhanko import stamp
+    from pyhanko.pdf_utils import layout
     from pyhanko.pdf_utils.crypt.permissions import StandardPermissions
     from pyhanko.pdf_utils.crypt.standard import StandardSecurityHandler, StandardSecuritySettingsRevision
     from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
@@ -245,7 +258,9 @@ def sign_pdf(
         if perms is not None and perms != -1:
             kw["perms"] = StandardPermissions.from_uint((perms | 0xFFFFF0C0) & 0xFFFFFFFC)
         algorithm = protection.get("algorithm")
-        if algorithm in ("aes128", "rc4"):  # as the document had it, for the readers that cannot open AES-256
+        # as the document had it, for the readers that cannot open AES-256; a password with Č, Ć or Đ has no
+        # PDFDocEncoding form, which AES-128 and RC4 take: such a copy gets AES-256, which MuPDF opens with it too
+        if algorithm in ("aes128", "rc4") and _pdfdoc(owner_pw, user_pw):
             # pyHanko writes new files with AES-256 only (and cannot sign on top of MuPDF's encryption): this is
             # what its encrypt() does, with its handler for the older kinds
             w._assign_security_handler(StandardSecurityHandler.build_from_pw_legacy(
@@ -282,7 +297,11 @@ def sign_pdf(
             fd, tmp_ap = tempfile.mkstemp(suffix=".pdf")
             with os.fdopen(fd, "wb") as f:
                 f.write(appearance_pdf)
-            style = stamp.StaticStampStyle.from_pdf_file(tmp_ap, border_width=0)
+            # the drawing fills the box: pyHanko's default margin of 5 file units shrank it, the more so on a page
+            # with a /UserUnit, where a file unit is bigger on screen (appearance_pdf keeps a margin of its own)
+            mid = layout.AxisAlignment.ALIGN_MID
+            fill = layout.SimpleBoxLayoutRule(x_align=mid, y_align=mid, margins=layout.Margins())
+            style = stamp.StaticStampStyle.from_pdf_file(tmp_ap, border_width=0, background_layout=fill)
         writer = IncrementalPdfFileWriter(io.BytesIO(data))
         if auth_pw is not None:
             writer.encrypt(auth_pw)
@@ -449,19 +468,21 @@ def box_from_display(page, rect) -> tuple[float, float, float, float]:
 
 
 def appearance_pdf(width: float, height: float, *, lines: list[tuple[str, float, str]], image: bytes | None = None,
-                   rotate: int = 0) -> bytes:
+                   rotate: int = 0, unit: float = 1.0) -> bytes:
     """One-page PDF used as the visible signature: optional signature image on the left,
     text lines (text, size, hex colour) on the right. ``rotate`` (the page /Rotate) turns
-    the drawing so it reads upright on rotated pages."""
+    the drawing so it reads upright on rotated pages; ``unit`` turns sizes on screen into
+    sizes on the page (geom.size_unit), so a page with a /UserUnit shows them as others do."""
     import pymupdf
 
     from .geom import rgb
     from .pdftools import FONT_NAME, FONT_SANS
 
+    lines = [(text, size * unit, color) for text, size, color in lines]
     draw_w, draw_h = (height, width) if rotate in (90, 270) else (width, height)
     src = pymupdf.open()
     pg = src.new_page(width=draw_w, height=draw_h)
-    pad = min(6.0, draw_h * 0.08)
+    pad = min(6.0 * unit, draw_h * 0.08)
     text_x = pad
     if image:
         img_w = min(draw_w * 0.45, draw_h * 2.2)

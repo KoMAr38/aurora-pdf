@@ -22,6 +22,7 @@ import pymupdf
 from core import annots as an
 from core import ocr, settings, signing
 from core import pdftools as pt
+from core.geom import size_unit
 from core.jobs import Jobs
 from core.session import Session, SessionError
 
@@ -1103,7 +1104,7 @@ class Api:
                     lines.append((f"{labels.get('location', 'Location')}: {location}", 7.5, "#5b6474"))
                 image = settings.signature_bytes(a["sig"]) if a.get("sig") else None
                 ap = signing.appearance_pdf(box[2] - box[0], box[3] - box[1], lines=lines, image=image,
-                                            rotate=page.rotation)
+                                            rotate=page.rotation, unit=size_unit(page))
             base = original if on_top else pt.clean_bytes(doc, self.s.fonts_embedded)
         signing.sign_pdf(base, out, signer, page_index=page_index, box=box, appearance_pdf=ap, reason=reason,
                          location=location, protection=prot, password=file_pw, field_name=field)

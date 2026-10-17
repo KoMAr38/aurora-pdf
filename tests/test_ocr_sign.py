@@ -168,6 +168,24 @@ def test_a_signed_copy_keeps_the_kind_of_protection(tmp_path, algorithm):
     assert res and res[0]["status"] == "valid", res
 
 
+@pytest.mark.parametrize("algorithm", ("aes128", "rc4"))
+@pytest.mark.parametrize("user, owner, kind", (("Tromsø", "Ålesund", None), ("Čačak", "Đurđevac", "aes256")))
+def test_a_signed_copy_with_letters_beyond_ascii_in_its_passwords(tmp_path, algorithm, user, owner, kind):
+    """AES-128 and RC4 read a password in PDFDocEncoding, which has ø and Å but no Č, Ć or Đ: signing a copy
+    with such a password failed. That copy gets AES-256, which takes them; passwords and permissions stay."""
+    ident = signing.create_id("Ana", "pw12345")
+    out = os.path.join(tmp_path, "s.pdf")
+    perms = pt.permissions_int([p for p in pt.ALL_PERMS if p != "modify"])
+    prot = {"user_pw": user, "owner_pw": owner, "perms": perms, "algorithm": algorithm}
+    signing.sign_pdf(make_doc(1).tobytes(), out, signing.load_signer(ident["id"], "pw12345"), protection=prot)
+    d = pymupdf.open(out)
+    assert pt._algorithm(pt._encrypt_dict(d)) == (kind or algorithm)
+    assert d.authenticate(user) == 2 and pymupdf.open(out).authenticate(owner) == 4
+    assert not d.permissions & pymupdf.PDF_PERM_MODIFY and d.permissions & pymupdf.PDF_PERM_PRINT
+    res = _signed_ok(out, user)
+    assert res and res[0]["status"] == "valid", res
+
+
 def test_a_protected_copy_of_a_signed_file_has_a_broken_signature(tmp_path):
     """Changing the protection rewrites the whole file, so the UI asks first; the copy shows why."""
     ident = signing.create_id("Ana", "pw12345")

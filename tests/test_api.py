@@ -921,6 +921,72 @@ def test_redaction_of_a_text_selection_is_one_step(api, tmp_path):
     assert call(api, "redact_count")["count"] == 0
 
 
+def test_a_redaction_that_would_leave_text_under_a_mark_changes_nothing(api, tmp_path, monkeypatch):
+    """Text drawn through a pattern that stays under a mark (here: a pattern copy that kept its text) stops the
+    redaction with a message the interface shows, and the document stays as it was, marks and all."""
+    from core import annots as an
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    pat, c = doc.get_new_xref(), doc.get_new_xref()
+    doc.update_object(pat, "<</Type/Pattern/PatternType 1/PaintType 1/TilingType 1/BBox[0 0 612 792]/XStep 612"
+                           "/YStep 792/Resources<</Font<</F9<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>>>>>")
+    doc.update_stream(pat, b"BT /F9 12 Tf 72 700 Td (SECRET1) Tj ET")
+    doc.update_object(c, "<<>>")
+    doc.update_stream(c, b"q /Pattern cs /P0 scn 0 0 612 792 re f Q")
+    doc.xref_set_key(page.xref, "Contents", f"{c} 0 R")
+    doc.xref_set_key(page.xref, "Resources", f"<</Pattern<</P0 {pat} 0 R>>>>")
+    ok(call(api, "open_path", path=save_tmp(doc, tmp_path, "patterned.pdf")))
+    ok(call(api, "annot_add", page=0, kind="redact", rects=[[60, 75, 200, 100]]))
+    monkeypatch.setattr(an, "_without_text", lambda doc, xref, *_: xref)
+    assert call(api, "redact_apply")["error"] == "REDACT_LEFT"
+    assert call(api, "redact_count")["count"] == 1 and "SECRET1" in call(api, "page_text", page=0)["text"]
+    monkeypatch.undo()
+    assert ok(call(api, "redact_apply"))["count"] == 1
+    assert "SECRET1" not in call(api, "page_text", page=0)["text"]
+
+
+def test_a_redaction_that_would_move_text_changes_nothing(api, tmp_path, monkeypatch):
+    """Should MuPDF's rewrite of the page still move text away from the marks (here: without our help against it),
+    the redaction stops with a message the interface shows, and the document stays as it was, marks and all."""
+    from core import annots as an
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    c = doc.get_new_xref()
+    doc.update_object(c, "<<>>")
+    doc.update_stream(c, b"BT /F9 12 Tf 72 700 Td (SECRET1) Tj ET "
+                         b"BT /F9 12 Tf 72 500 Td (KEEPME) Tj 0 0 Td (KEEPME) Tj ET")
+    doc.xref_set_key(page.xref, "Contents", f"{c} 0 R")
+    doc.xref_set_key(page.xref, "Resources", "<</Font<</F9<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>>>")
+    ok(call(api, "open_path", path=save_tmp(doc, tmp_path, "overprint.pdf")))
+    ok(call(api, "annot_add", page=0, kind="redact", rects=[[60, 75, 200, 100]]))
+    monkeypatch.setattr(an, "_steady", lambda data, *args, **kw: data)
+    assert call(api, "redact_apply")["error"] == "REDACT_MOVED"
+    assert call(api, "redact_count")["count"] == 1 and "SECRET1" in call(api, "page_text", page=0)["text"]
+    monkeypatch.undo()
+    assert ok(call(api, "redact_apply"))["count"] == 1
+    assert "SECRET1" not in call(api, "page_text", page=0)["text"]
+
+
+def test_a_signature_on_a_page_with_a_user_unit_looks_as_on_other_pages(api, tmp_path):
+    """On a page with /UserUnit 2 a unit of the file is two points on screen: the text of a visible signature
+    came out twice as big as on other pages."""
+    ident = ok(call(api, "id_create", name="Marko Test", password="pw1234"))["id"]
+    rows = []
+    for unit in (1, 2):
+        doc = pymupdf.open()
+        doc.new_page(width=612 / unit, height=792 / unit)
+        doc.xref_set_key(doc.page_xref(0), "UserUnit", str(unit))
+        ok(call(api, "open_path", path=save_tmp(doc, tmp_path, f"unit{unit}.pdf")))
+        out = str(tmp_path / f"signed{unit}.pdf")
+        answers(api, out)
+        ok(call(api, "sign_digital", id=ident, password="pw1234", page=0, rect=[150, 300, 450, 380]))
+        pix = pymupdf.open(out)[0].get_pixmap(dpi=72, alpha=False)
+        rows.append([y for y in range(300, 380) if any(sum(pix.pixel(x, y)) < 450 for x in range(150, 450))])
+    assert rows[0] and abs(len(rows[1]) - len(rows[0])) <= 3 and abs(rows[1][0] - rows[0][0]) <= 3, rows
+
+
 # the check pywebview 6.2 runs on every filter before a native dialog opens (webview.util.parse_file_type)
 FILTER = r"^([\w ]+)\((\*(?:\.(?:\w+|\*))*(?:;\*(?:\.(?:\w+|\*))*)*)\)$"
 

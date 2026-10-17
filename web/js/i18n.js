@@ -88,6 +88,8 @@ window.Aurora = window.Aurora || {};
     ["e_OPEN_FILE", "Taj fajl je sad otvoren ovde. Izaberi drugo ime.", "That file is open here right now. Pick another name.", "Den filen er åpen her nå. Velg et annet navn."],
     ["e_FILE_CHANGED", "Drugi program je u međuvremenu izmenio ovaj fajl. Sačuvaj kao novi fajl, da nijedna verzija ne propadne.", "Another program changed this file in the meantime. Save as a new file, so neither version is lost.", "Et annet program har endret filen i mellomtiden. Lagre som en ny fil, så ingen av versjonene går tapt."],
     ["e_SAVE_FIRST", "Otvoreni fajl ima nesačuvane izmene. Prvo ga sačuvaj, pa spoji.", "The open file has unsaved changes. Save it first, then combine.", "Den åpne filen har ulagrede endringer. Lagre den først, og slå sammen etterpå."],
+    ["e_REDACT_LEFT", "Deo teksta ispod oznake ne može da se ukloni, pa zacrnjivanje nije primenjeno.", "Some text under a mark cannot be removed, so the redactions were not applied.", "Noe av teksten under et merket område kan ikke fjernes, så sladdingen ble ikke utført."],
+    ["e_REDACT_MOVED", "Zacrnjivanje bi pomerilo ili izbrisalo tekst van oznake, pa nije primenjeno.", "The redactions would move or remove text outside the marks, so they were not applied.", "Sladdingen ville ha flyttet eller fjernet tekst utenfor de merkede områdene, så den ble ikke utført."],
 
     /* ---- undo labels ---- */
     ["op_rotate", "rotacija", "rotate", "rotering"],

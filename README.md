@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 298 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 425 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -49,7 +49,7 @@ tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e
 
 Motoren er PyMuPDF, som bygger på MuPDF. pyHanko lager og kontrollerer sertifikatsignaturene, cryptography lager nøklene til de digitale ID-ene, pdf2docx står for Word-eksporten, og Pillow koder sidebildene. Grensesnittet er vanlig HTML, CSS og JavaScript i et WebView2-vindu fra pywebview. Det har ikke noe byggesteg: filene i `web/` er de som kjører.
 
-Koden er rundt 5 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS. Testene er 5 200 linjer.
+Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS. Testene er 6 100 linjer.
 
 ### Valg som er verdt å se på
 
@@ -81,9 +81,9 @@ Koden er rundt 5 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 144 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
-| `tests/test_api.py` | 63 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
-| `tests/test_ocr_sign.py` | 19 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
+| `tests/test_engine.py` | 264 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding og at tekst utenfor området står der den sto, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
+| `tests/test_api.py` | 66 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_ocr_sign.py` | 23 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
 | `tests/e2e/test_ui.py` | 68 | Grensesnittet, styrt med mus og tastatur |
 
@@ -98,6 +98,10 @@ Noen av testene:
 - `test_redaction_removes_comments_fields_and_links_under_the_mark`: det sladdede nummeret finnes ikke noe sted i den lagrede filen, heller ikke i en utheving, et notat, et skjemafelt eller en lenke
 - `test_redaction_reaches_what_a_tagged_file_says_again`: i en tagget fil finnes det sladdede nummeret heller ikke i teksten for kopiering og skjermlesere eller i strukturtreet
 - `test_redaction_takes_only_the_tagged_words_under_the_mark`: i en tagget fil forsvinner bare teksten for kopiering og skjermlesere som hører til innholdet under området, også på roterte sider og i tegninger som siden bruker
+- `test_redaction_leaves_text_away_from_the_mark_in_place`: tekst utenfor området står der den sto, også tekst som skrives to ganger på samme sted, linjer skrevet med ' og ", og tekst i tegninger som setter tegnavstanden eller gjengivelsesmåten til standardverdien
+- `test_redaction_reaches_text_in_patterns_and_soft_masks`: tekst i et mønster eller en myk maske under området forsvinner, og ordene finnes ikke lenger i filen, heller ikke i en tegning som mønsteret eller masken deler med siden
+- `test_redaction_reaches_text_in_a_layer_that_is_off`: tekst i et mønster eller en myk maske i et lag som er slått av, forsvinner også fra filen
+- `test_redaction_keeps_a_line_in_place_where_the_size_changes`: etter en eksponent, et punkttegn i mindre skrift eller en annen skalering står resten av linjen der den sto
 - `test_closing_never_takes_the_document_from_a_job`: lukkes vinduet mens OCR leser en side, stopper jobben etter den siden før dokumentet lukkes
 - `test_what_is_read_shows_where_it_is_on_any_page` og `test_what_is_added_lands_where_it_was_put_on_any_page`: ord, søketreff, lenker, tegninger, vannmerker, sidetall og beskjæring havner der siden viser dem, på sider som er rotert, beskåret, har MediaBox utenfor 0,0, CropBox utenfor MediaBox eller /UserUnit
 - `test_failed_edit_rolls_back`: en endring som feiler, etterlater ingen spor
@@ -172,6 +176,14 @@ Resten står i `START_HER.md`.
 
 **Det som sto igjen etter den tredje gjennomgangen, er rettet.** Sladding fjernet ikke kommentarer som var skrevet rett inn i sidens kommentarliste i stedet for som egne objekter. På en sladdet side i en tagget fil forsvant all tekst for kopiering og skjermlesere, også for innholdet utenfor området. Nå merkes hvert stykke innhold før sladdingen, programmet følger hvor det tegnes, og bare teksten til det som ligger under området, fjernes. På sider med /UserUnit fikk tekstbokser, skjemafelt og strektykkelser feil størrelse. En signert kopi av en fil med AES-128 ble kryptert med AES-256, og komprimering kunne ikke avbrytes mens bildene ble regnet om. Ble vinduet lukket mens OCR leste en side i mer enn ti sekunder, ble dokumentet lukket under jobben. Underveis kom to feil til fram. En fil som hadde fått begrensninger i programmet, kunne ikke signeres. Og strukturtreet i en tagget fil pekte fortsatt på det sladdingen skulle fjerne: de opprinnelige tegningene, der den sladdede teksten lå igjen, bilder som var byttet ut, og tegningene til kommentarer som var fjernet. Alle har tester.
 
+**MuPDF flyttet tekst når det sladdet.** For å fjerne tekst skriver MuPDF 1.28.2 hele innholdet på siden på nytt, og da ble ikke all tekst utenfor området stående der den sto. Tekst som skrives to ganger på samme sted for å se fet ut, havnet i enden av linjen. Linjer skrevet med ' og " havnet utenfor siden. En tegning som ble brukt på siden, mistet tegnavstanden, strektykkelsen og gjengivelsesmåten når den satte dem til standardverdien, så en bunntekst på en OCR-side ble usynlig. Etter en eksponent, et punkttegn i mindre skrift eller en annen skalering flyttet resten av linjen seg. Og en tekstblokk som bare fikk plassen sin fra en cm, ble flyttet like langt som det som ble fjernet på slutten av blokken før. Programmet skriver nå innholdet slik at MuPDF lar teksten stå. Etter sladdingen sammenlignes hver bokstav med plassen den hadde før, og bokstavene leses med den samme boksen som MuPDF bruker for å avgjøre hva som fjernes. Er en bokstav utenfor området flyttet eller borte, blir ingenting sladdet, og programmet sier fra. Komprimering ved lagring lot MuPDF skrive innholdet om på samme måte og flyttet tekst. Den delen er slått av. De fleste av feilene er rettet i MuPDF 1.28.5, men ingen PyMuPDF bygger på den ennå.
+
+I en prøve med 2 576 sladdinger av ord, linjer og avsnitt i 725 PDF-filer, fra testfilene til pdf.js og pypdf, dokumentasjonen i TeX Live og egne filer fra LibreOffice, LaTeX og ReportLab, ble 2 548 utført med hver bokstav utenfor området på plass. 16 ble stoppet: 10 i loddrett tekst og 6 i filer der MuPDF ville ha flyttet tekst. Fire filer som er laget ødelagte med vilje, kunne ikke sladdes. Bildet av siden endret seg utenfor området bare der det som ble fjernet, gikk ut over kanten (en hel bokstav, et helt bildepunkt eller all tekst i et mønster), i enkelte kantpiksler, og i én fil med en feil i innholdet, der MuPDF etterpå viste en tekst det skjulte før.
+
+**Sladdingen lot ord bli igjen, og noen sider tok skade.** Tekst som en side fyller et område med gjennom et mønster eller en myk maske, nås ikke av MuPDFs sladding og ble liggende under den svarte boksen. Nå fjernes all tekst i et slikt mønster eller en slik maske. Ressurser som sidetreet deler ut til sidene, slik noen skannere skriver dem, pekte fortsatt på den opprinnelige tegningen eller det opprinnelige bildet, med det sladdede innholdet i. I en tagget fil ble ordene stående i teksten for kopiering og skjermlesere når innholdet var skrevet på måter programmet leste annerledes enn MuPDF, når et område fra et annet program hadde /QuadPoints utenfor rektangelet, og når MuPDF fjernet en bokstav som området bare berørte med boksen sin. En skrift som oppga bokstavene som 0,2 punkter høye, fikk dem til å bli liggende under området uten at noe ble sagt. Nå stopper sladdingen da. En innholdsstrøm komprimert med en prediktor ble skrevet tilbake som søppel, så siden ble tom. Den svarte boksen havnet et annet sted på roterte sider der sideboksene ikke begynner i 0,0, og på sider med /UserUnit. En tegning uten egne ressurser mistet blandemodusen, så en utheving dekket ordene under den, og et bilde i den forsvant. Ved signering ble teksten i en synlig signatur dobbelt så stor på en side med /UserUnit 2, og en signert kopi av en fil med AES-128 eller RC4 kunne ikke lages når passordet hadde Č, Ć eller Đ. Nå får en slik kopi AES-256. Alle har tester.
+
+**En siste gjennomgang fant ni feil til.** Et lag som er slått av, skjuler innholdet sitt på skjermen, men ikke for MuPDFs sladding. Kontrollene leste likevel siden slik den vises, så tekst som et mønster eller en myk maske tegnet i et slikt lag, ble liggende i filen, og tekst som flyttet seg der, ble ikke oppdaget. På en rotert side med /UserUnit lette kontrollen etter tekst under området et annet sted enn der området lå. Et bilde som står rett i innholdet (BI … ID … EI), leser MuPDF etter størrelsen. Programmet tok den første EI i bildepunktene som slutten, leste resten av bildet som innhold og kunne skrive inn i det. Kontrollen etter sladdingen sammenlignet med siden slik programmet hadde skrevet den om, ikke slik den var. Linjeskift i en tekststreng og en kommentar inne i en tabell ble lest annerledes enn MuPDF leser dem. Etter en beskjæring ble en sladdet lenke stående i MuPDFs liste over lenkene på siden, og lesingen av lenkene feilet. Og en side der hvert ord har sin egen plassering i én tekstblokk, tok seks sekunder å forberede med 4 000 ord. Nå tar det 0,04 sekunder. Alle har tester.
+
 ---
 
 ## Forbehold
@@ -182,7 +194,7 @@ Resten står i `START_HER.md`.
 
 **Tillatelsene håndheves ikke med kryptering.** Passordet for å åpne filen krypterer innholdet. Tillatelsene for utskrift, kopiering og redigering følges av PDF-lesere som respekterer standarden.
 
-**Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området. I en tagget fil fjernes teksten for kopiering og skjermlesere (/ActualText, /Alt og /E) til innhold som berører området, til innhold som ikke tegnes, for eksempel et skjult lag, og til en tegning som brukes flere ganger på siden når én av dem berører området. Kan programmet ikke følge innholdet på en side, fjernes all slik tekst på den siden.
+**Sladding fjerner tekst og bildepunkter under området.** Streker og annen vektorgrafikk fjernes bare når de ligger helt innenfor området. En bokstav som berører området, fjernes hel, og et bilde mister hele bildepunkter, så det som fjernes, kan gå litt utenfor kanten. Berører området tekst i et mønster eller en myk maske, fjernes all tekst i det mønsteret eller den masken, også utenfor området, mens bildene i dem blir stående. Loddrett tekst kan ikke sladdes, og noen få filer er skrevet slik at MuPDF ville flytte tekst når det sladder, for eksempel tekst utenfor en tekstblokk, en skrift som velges gjennom en /ExtGState eller tekst i et klippeområde uten flate. Da blir ingenting sladdet, og programmet sier fra. Tekst som et annet program har lagt oppå et sladdet område (/OverlayText), vises ikke. I en tagget fil fjernes teksten for kopiering og skjermlesere (/ActualText, /Alt og /E) til innhold som berører området, til innhold som ikke tegnes, for eksempel et skjult lag, og til en tegning som brukes flere ganger på siden når én av dem berører området. Kan programmet ikke følge innholdet på en side, fjernes all slik tekst på den siden.
 
 **Et notat på en side med /UserUnit får større ikon enn i andre PDF-lesere.** MuPDF tegner ikonet 16 enheter stort, så med /UserUnit 2 blir det dobbelt så stort på skjermen.
 

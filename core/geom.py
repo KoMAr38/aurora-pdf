@@ -29,6 +29,14 @@ def page_ctm(page: pymupdf.Page) -> pymupdf.Matrix:
     return pymupdf.Matrix(ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f)
 
 
+def set_page_key(page: pymupdf.Page, key: str, value: pymupdf.mupdf.PdfObj) -> None:
+    """Set a key of the page's dictionary in place. doc.xref_set_key puts a new copy in its place, and MuPDF tells a
+    page's links by the objects of the /Annots it loaded: a redaction after it left the link it took in MuPDF's
+    list of the page, and reading the page's links then failed (IndexError)."""
+    m = pymupdf.mupdf
+    m.pdf_dict_puts(m.pdf_load_object(pymupdf._as_pdf_document(page.parent), page.xref), key, value)
+
+
 def turn(page: pymupdf.Page) -> pymupdf.Matrix:
     """Unrotated space -> display space: the page turned about its real size. page.rotation_matrix turns it about
     the CropBox as written, which is another size when MuPDF clips the CropBox or scales by /UserUnit."""

@@ -16,7 +16,7 @@ from typing import Callable, Iterable, Sequence
 
 import pymupdf
 
-from .geom import page_ctm, rgb, rounded, to_insert, to_text, turn
+from .geom import page_ctm, rgb, rounded, set_page_key, to_insert, to_text, turn
 from .paths import FONT_SANS
 
 log = logging.getLogger("aurora.pdftools")
@@ -211,8 +211,8 @@ def save_pdf(
     tmp = _working_copy(doc, subset_fonts)
     try:
         opts: dict = dict(garbage=1, deflate=True)
-        if compress:
-            opts.update(garbage=4, deflate_images=True, deflate_fonts=True, clean=True, use_objstms=1)
+        if compress:  # not clean=True: MuPDF 1.28.2 writes the content anew then, and moved text (see annots._steady)
+            opts.update(garbage=4, deflate_images=True, deflate_fonts=True, use_objstms=1)
         if user_pw or owner_pw:
             if perms is None:
                 perms = permissions_int(allowed if allowed is not None else ALL_PERMS)
@@ -551,7 +551,7 @@ def uncrop_pages(doc: pymupdf.Document, pages: Sequence[int]) -> None:
 
 
 def _set_box(doc, page, key: str, r: pymupdf.Rect) -> None:
-    doc.xref_set_key(page.xref, key, "[" + " ".join(f"{v:.4f}".rstrip("0").rstrip(".") for v in r) + "]")
+    set_page_key(page, key, pymupdf.mupdf.pdf_new_rect(pymupdf._as_pdf_document(doc), pymupdf.mupdf.FzRect(*r)))
 
 
 # --- multi-file operations ----------------------------------------------------
