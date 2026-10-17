@@ -1112,6 +1112,39 @@ def test_settings_changed_from_two_threads_keep_both_changes(tmp_path, monkeypat
     assert final["author"] == "Ana" and final["recent"][0]["path"] == doc
 
 
+@pytest.mark.parametrize("langid, lang", [(0x0414, "no"), (0x0814, "no"), (0x241A, "sr"), (0x081A, "sr"),
+                                          (0x041A, "sr"), (0x141A, "sr"), (0x0409, "en"), (0x0407, "en")])
+def test_a_first_start_speaks_the_language_of_windows(langid, lang):
+    """nb-NO, nn-NO, Serbian, Croatian and Bosnian, English and German display languages of Windows."""
+    from core import settings
+
+    assert settings.lang_for(langid) == lang
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows asks the system, not LANG")
+@pytest.mark.parametrize("tag, lang", [("nb_NO.UTF-8", "no"), ("sr_RS@latin", "sr"), ("de_DE.UTF-8", "en"), ("", "en")])
+def test_elsewhere_the_first_language_comes_from_lang(tag, lang, monkeypatch):
+    from core import settings
+
+    for name in ("LC_ALL", "LC_MESSAGES"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LANG", tag)
+    assert settings.system_lang() == lang
+
+
+def test_a_picked_language_wins_over_the_language_of_windows(tmp_path, monkeypatch):
+    from core import settings
+
+    monkeypatch.setenv("AURORA_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "system_lang", lambda: "no")
+    assert settings.load()["lang"] == "no"
+    settings.update(author="Ana")  # the first save stores the language Windows gave, so it stays
+    monkeypatch.setattr(settings, "system_lang", lambda: "en")
+    assert settings.load()["lang"] == "no"
+    settings.update(lang="sr")
+    assert settings.load()["lang"] == "sr"
+
+
 def test_shortcuts_and_pdf_handler_carry_the_window_app_id():
     """main.py gives the window an explicit taskbar ID. Unless the shortcuts and the PDF handler carry
     the same ID, Windows pins pythonw.exe itself, which shows Python's icon and opens nothing."""

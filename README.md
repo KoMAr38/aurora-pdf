@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 449 automatiske tester. 68 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 464 automatiske tester. 70 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -44,6 +44,8 @@ core/        PDF-motoren: arbeidskopi og angre, sider, kommentarer, signering, O
 web/         grensesnittet: HTML, CSS og ni JavaScript-filer uten rammeverk
 resources/   skriften Noto Sans og språkdata for OCR
 scripts/     snarveier og PDF-registreringen i Windows
+packaging/   MSIX-pakken til Microsoft Store: manifest, ikoner og byggeskript
+docs/        nettsiden på GitHub Pages med personvernerklæringen, og bildene i denne filen
 tests/       motoren og API-et med pytest, grensesnittet med Playwright (tests/e2e)
 ```
 
@@ -82,10 +84,10 @@ Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 | Fil | Tester | Dekker |
 |---|---:|---|
 | `tests/test_engine.py` | 288 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding og at tekst utenfor området står der den sto, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
-| `tests/test_api.py` | 66 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_api.py` | 79 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 23 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 4 | Oversettelsene |
-| `tests/e2e/test_ui.py` | 68 | Grensesnittet, styrt med mus og tastatur |
+| `tests/e2e/test_ui.py` | 70 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
 
@@ -143,6 +145,8 @@ Målt med `tests/e2e/perf.py` i hodeløs Chromium, i en Linux-container med to p
 Fila finner Python 3.11–3.14 eller tilbyr å installere 3.13 med winget. Så lager den `.venv`, installerer bibliotekene, kjører installasjonssjekken og legger snarveier på skrivebordet og i Start-menyen. Svares det J på spørsmålet om PDF-filer, kommer Aurora PDF med under «Åpne med» og i Standardapper, og Innstillinger åpnes på siden der det kan velges som standard. Det valget gjør brukeren selv, for Windows lar ikke et program gjøre seg til standard. Krever Windows 10 eller 11 med Microsoft Edge WebView2, som følger med Windows 11.
 
 Resten står i `START_HER.md`.
+
+Pakken til Microsoft Store bygges på GitHub når grenen `store` sendes opp (`.github/workflows/store.yml`). PyInstaller lager programmappa, og `packaging/build_msix.ps1` legger til manifest og ikoner og pakker alt med verktøyene i Windows SDK. Etterpå kjører installasjonssjekken både i det bygde programmet og i en installert kopi av pakken.
 
 ---
 
@@ -216,4 +220,6 @@ I en prøve med 2 576 sladdinger av ord, linjer og avsnitt i 725 PDF-filer, fra 
 
 AGPL-3.0, fordi PyMuPDF har den lisensen. Skriftene er under SIL Open Font License og OCR-dataene under Apache-2.0. Alle komponentene står i `THIRD_PARTY_NOTICES.md`.
 
-Aurora PDF er ikke tilknyttet Adobe.
+En ferdig pakket versjon skal selges i Microsoft Store. AGPL tillater salg. Pakken bygges fra koden i dette repoet, og alle kan fortsatt laste ned koden, bygge programmet selv og dele det videre under AGPL-3.0. Den som kjøper, betaler for en versjon som installeres fra Store og oppdateres derfra.
+
+Aurora PDF er laget og vibe-kodet av Marko Veselinović. Programmet er ikke tilknyttet Adobe.

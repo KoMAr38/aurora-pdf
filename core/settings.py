@@ -22,7 +22,7 @@ _LOCK = threading.RLock()  # requests run on several threads: each read-change-w
 MAX_RECENT = 12
 
 DEFAULTS = {
-    "lang": "sr",
+    "lang": "en",  # until the user picks one, load() gives the language of Windows (system_lang)
     "theme": "system",  # system follows the Windows app colour
     "author": "",
     "night": False,
@@ -39,8 +39,23 @@ def _file() -> Path:
     return data_dir() / "settings.json"
 
 
+def lang_for(langid: int) -> str:
+    """UI language for a Windows LANGID: Norwegian, Serbian (Croatian and Bosnian share its primary id) or English."""
+    return {0x14: "no", 0x1A: "sr"}.get(langid & 0x3FF, "en")
+
+
+def system_lang() -> str:
+    """The language a first start speaks: that of Windows, or of the LANG variable elsewhere."""
+    if os.name == "nt":
+        import ctypes
+        return lang_for(ctypes.windll.kernel32.GetUserDefaultUILanguage())
+    tag = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "")[:2].lower()
+    return "no" if tag in ("nb", "nn", "no") else "sr" if tag in ("sr", "hr", "bs") else "en"
+
+
 def load() -> dict:
     data = dict(DEFAULTS)
+    stored = None
     try:
         with _LOCK:  # Windows cannot replace the file (save) while another thread has it open for reading
             stored = json.loads(_file().read_text(encoding="utf-8"))
@@ -48,6 +63,8 @@ def load() -> dict:
             data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     except (OSError, ValueError):
         pass
+    if not isinstance(stored, dict) or "lang" not in stored:
+        data["lang"] = system_lang()
     if not data["author"]:
         try:
             data["author"] = getpass.getuser()

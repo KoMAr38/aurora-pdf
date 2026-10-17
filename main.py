@@ -81,11 +81,22 @@ def set_titlebar(hwnd: int, dark: bool) -> None:
     ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x4037)  # ASYNCWINDOWPOS FRAMECHANGED NOACTIVATE NOZORDER NOSIZE NOMOVE
 
 
+def packaged() -> bool:
+    """True when running from the Store's MSIX package, which gives the window its taskbar ID itself."""
+    try:
+        import ctypes
+
+        n = ctypes.c_uint32(0)
+        return ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(n), None) != 15700  # APPMODEL_ERROR_NO_PACKAGE
+    except (AttributeError, OSError):  # not Windows, or Windows before 8
+        return False
+
+
 def run_window(api: Api, server: AppServer) -> None:
     import webview
     from webview.dom import DOMEventHandler
 
-    if sys.platform.startswith("win"):
+    if sys.platform.startswith("win") and not packaged():
         try:  # own taskbar group and icon instead of Python's
             import ctypes
 

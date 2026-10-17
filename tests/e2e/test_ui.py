@@ -1283,6 +1283,46 @@ def test_languages_switch_everything(ui):
         assert raw == [], raw
 
 
+def test_about_names_the_author_the_licence_and_the_code(ui):
+    """AGPL-3.0 asks the program to show its licence and where its code is; the author is named too."""
+    ui.js("Aurora.openPanel('settings')")
+    ui.page.click('#sLang [data-v="en"]')
+    assert ui.page.inner_text("#sAuthorLine") == "Created and vibe-coded by Marko Veselinović. © 2026 Marko Veselinović"
+    assert "GNU AGPL-3.0" in ui.page.inner_text("#panelInner") and "no warranty" in ui.page.inner_text("#panelInner")
+    repo = "https://github.com/KoMAr38/aurora-pdf"
+    urls = ui.js("[...document.querySelectorAll('#panelInner [data-url]')].map((b) => b.dataset.url)")
+    assert urls == [repo, repo + "/blob/main/LICENSE", repo + "/blob/main/THIRD_PARTY_NOTICES.md"]
+    # a click asks the backend to open the page; caught here so no browser starts during the test
+    ui.js("""() => { const call = Aurora.call; Aurora.opened = [];
+        Aurora.call = (m, p, o) => m === 'open_url' ? (Aurora.opened.push(p.url), Promise.resolve({ ok: true })) : call(m, p, o); }""")
+    ui.page.click('#panelInner [data-url$="LICENSE"]')
+    assert ui.js("Aurora.opened") == [repo + "/blob/main/LICENSE"]
+
+
+def test_read_aloud_uses_only_voices_on_this_computer(ui):
+    """An online voice would send the text to a speech service; the program promises files stay on the PC."""
+    ui.js("Aurora.setLang('en')")
+    fake = """(voices) => { window.spoken = [];
+        window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+        const synth = Object.assign(new EventTarget(), {
+          getVoices: () => voices, cancel: () => {}, speak: (u) => window.spoken.push(u.voice && u.voice.name) });
+        Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: synth });
+        window.fillVoices = (more) => { voices = more; synth.dispatchEvent(new Event('voiceschanged')); }; }"""
+    online = {"name": "Online (Natural)", "lang": "en-US", "localService": False, "default": True}
+    zira = {"name": "Zira", "lang": "en-US", "localService": True, "default": False}
+    ui.js(fake, [online, zira])
+    ui.js("Aurora.speak('Hello there')")
+    assert ui.js("window.spoken") == ["Zira"]
+    # Chromium gives no voices on the first ask and fills the list a moment later
+    ui.js(fake, [])
+    ui.js("(v) => { setTimeout(() => fillVoices(v), 100); return Aurora.speak('Hello there'); }", [online, zira])
+    assert ui.js("window.spoken") == ["Zira"]
+    ui.js(fake, [online])
+    ui.js("Aurora.speak('Hello there')")
+    assert ui.js("window.spoken") == []
+    assert ui.t("noSpeech") in ui.toasts()
+
+
 def test_theme_follows_windows_and_the_choice_is_remembered(ui):
     page = ui.page
     theme = lambda: ui.js("document.documentElement.dataset.theme")  # noqa: E731

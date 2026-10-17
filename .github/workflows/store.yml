@@ -1,0 +1,65 @@
+name: Microsoft Store package
+
+# Builds the MSIX for the Store when the store branch is pushed (git push origin main:store), or by hand
+on:
+  workflow_dispatch:
+  push:
+    branches: [store]
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Libraries
+        run: python -m pip install --disable-pip-version-check -r requirements.txt pyinstaller==6.22.3
+      - name: Selftest from the source
+        run: python main.py --selftest
+      - name: Build the package
+        shell: pwsh
+        run: packaging\build_msix.ps1
+      - name: Selftest of the built program
+        shell: pwsh
+        run: |
+          $p = Start-Process 'dist\AuroraPDF\AuroraPDF.exe' -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content "$env:APPDATA\AuroraPDF\selftest.txt"
+          if ($p.ExitCode -ne 0) { throw "selftest of AuroraPDF.exe failed ($($p.ExitCode))" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aurora-pdf-store-package
+          path: dist/*.msix
+          if-no-files-found: error
+      - name: Install a signed copy and run its selftest inside the package
+        shell: pwsh
+        run: |
+          # a throw-away certificate named like the manifest's Publisher; the Store signs the real package itself
+          $publisher = ([xml](Get-Content -Raw -Encoding UTF8 'packaging\AppxManifest.xml')).Package.Identity.Publisher
+          $test = Join-Path $env:RUNNER_TEMP 'AuroraPDF-test.msix'
+          Copy-Item (Get-Item 'dist\*.msix').FullName $test
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyUsage DigitalSignature `
+            -FriendlyName 'Aurora PDF build test' -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          $pfx = Join-Path $env:RUNNER_TEMP 'test.pfx'
+          $pw = ConvertTo-SecureString -String 'build-test' -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pw | Out-Null
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1).FullName
+          & $signtool sign /fd SHA256 /f $pfx /p build-test $test
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed ($LASTEXITCODE)" }
+          $cer = Join-Path $env:RUNNER_TEMP 'test.cer'
+          Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+          Import-Certificate -FilePath $cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
+          Add-AppxPackage -Path $test
+          $pkg = Get-AppxPackage -Name ([xml](Get-Content -Raw -Encoding UTF8 'packaging\AppxManifest.xml')).Package.Identity.Name
+          $pkg | Format-List Name, Version, PackageFamilyName, InstallLocation
+          # the alias starts the program inside the package, where %APPDATA% is the package's own folder
+          $p = Start-Process (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\aurorapdf.exe') -ArgumentList '--selftest' -Wait -PassThru
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA "Packages\$($pkg.PackageFamilyName)") -Recurse -Filter selftest.txt |
+            ForEach-Object { Write-Host $_.FullName; Get-Content $_.FullName }
+          if ($p.ExitCode -ne 0) { throw "selftest inside the package failed ($($p.ExitCode))" }

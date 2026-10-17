@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MSIX package for the Microsoft Store, built by packaging/build_msix.ps1.
+     Identity Name and Publisher, and PublisherDisplayName, must be copied from Partner Center
+     (Product management > Product identity) once the name is reserved; the Store refuses others.
+     Raise Version for every submission. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity Name="MarkoVeselinovic.AuroraPDF" Publisher="CN=00000000-0000-0000-0000-000000000000"
+            Version="2.0.0.0" ProcessorArchitecture="x64"/>
+
+  <Properties>
+    <DisplayName>Aurora PDF</DisplayName>
+    <PublisherDisplayName>Marko Veselinović</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0"/>
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us"/>
+    <Resource Language="nb-no"/>
+    <Resource Language="sr-latn-rs"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="AuroraPDF" Executable="AuroraPDF.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Aurora PDF"
+                          Description="Read, comment, fill in, sign and password-protect PDF files"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
+      </uap:VisualElements>
+      <Extensions>
+        <!-- offered under Open with and in Default apps; Windows leaves the default to the user -->
+        <uap3:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="pdf" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>PDF</uap:DisplayName>
+            <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.pdf</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
+        <!-- "aurorapdf file.pdf" from a command line; the build also runs the installed package's selftest through it -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="AuroraPDF.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="aurorapdf.exe"/>
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust"/>
+  </Capabilities>
+</Package>

@@ -23,14 +23,14 @@ Siste linje fra installasjonssjekken skal være:
 All checks passed. Report: C:\Users\<bruker>\AppData\Roaming\AuroraPDF\selftest.txt
 ```
 
-Siste linje fra `2_TESTER.bat` skal vise `449 passed`.
+Siste linje fra `2_TESTER.bat` skal vise `460 passed, 4 skipped`. De fire som hoppes over, gjelder språket ved første start på andre systemer enn Windows.
 
 ## Bruk
 
 - Start fra snarveien «Aurora PDF» på skrivebordet eller i Start-menyen
 - Åpne en fil med Ctrl+O, ved å dra den inn i vinduet, eller med «Åpne med» i Filutforsker hvis det ble valgt under installasjonen
 - Skal PDF-filer åpnes i Aurora PDF med dobbeltklikk og vise Aurora-ikonet, velg Aurora PDF som standard i Innstillinger > Apper > Standardapper. Windows lar ikke programmer gjøre det selv. Installasjonen åpner den siden når PDF-spørsmålet besvares med J
-- Språk og tema velges under ⋯ → Innstillinger. Programmet starter på serbisk første gang, og temaet følger Windows til et annet er valgt
+- Språk og tema velges under ⋯ → Innstillinger. Første gang følger språket Windows: norsk, serbisk (også for kroatisk og bosnisk) eller ellers engelsk. Temaet følger Windows til et annet er valgt
 - `?` viser alle hurtigtastene
 
 ## Hvor ting lagres

@@ -231,16 +231,26 @@
   }
 
   /* ---------- read aloud ---------- */
-  A.speak = (text) => {
+  A.speak = async (text) => {
     const synth = window.speechSynthesis;
     if (!synth) return A.toast(A.t("noSpeech"), "bad");
     synth.cancel();
     if (!text || !text.trim()) return A.toast(A.t("nothingToRead"), "info");
-    const u = new SpeechSynthesisUtterance(text);
+    let all = synth.getVoices();
+    if (!all.length) { // the list fills in after the first ask
+      all = await new Promise((ok) => {
+        synth.addEventListener("voiceschanged", () => ok(synth.getVoices()), { once: true });
+        setTimeout(() => ok(synth.getVoices()), 1500);
+      });
+    }
+    // only voices that run on this computer: an online voice sends the text to a speech service
+    const voices = all.filter((x) => x.localService);
+    if (!voices.length) return A.toast(A.t("noSpeech"), "bad");
     const want = { sr: ["sr", "hr", "bs"], no: ["nb", "no", "nn"], en: ["en"] }[S.lang] || ["en"];
-    const voices = synth.getVoices();
-    const v = voices.find((x) => want.some((w) => x.lang.toLowerCase().startsWith(w)));
-    if (v) { u.voice = v; u.lang = v.lang; }
+    const v = voices.find((x) => want.some((w) => x.lang.toLowerCase().startsWith(w))) || voices.find((x) => x.default) || voices[0];
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = v;
+    u.lang = v.lang;
     u.onend = u.onerror = () => { S.speaking = false; renderVbar(); };
     S.speaking = true;
     renderVbar();
@@ -628,7 +638,7 @@
     }
     S.settings = st.settings || {};
     applyTheme();
-    S.lang = A.I18N[S.settings.lang] ? S.settings.lang : "sr";
+    S.lang = A.I18N[S.settings.lang] ? S.settings.lang : "en";
     document.documentElement.lang = S.lang;
     S.night = !!S.settings.night;
     S.fit = S.settings.fit || "width";

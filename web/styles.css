@@ -982,6 +982,7 @@ body.ready #app { opacity: 1; transition: opacity 0.2s; }
 .hint { color: var(--faint); font-size: 12.5px; line-height: 1.5; }
 .hint.warn { color: var(--warn-text); }
 .hint.dim { padding: 8px 2px; }
+.hint + .hint { margin-top: 6px; }
 .field .hint { margin-top: 0; }
 .btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

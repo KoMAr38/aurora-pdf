@@ -581,7 +581,11 @@ window.Aurora = window.Aurora || {};
     ["nightHint", "Tamnije strane za čitanje noću", "Darker pages for reading at night", "Mørkere sider for lesing om kvelden"],
     ["defaultFit", "Zum pri otvaranju", "Zoom when opening", "Zoom ved åpning"],
     ["aboutT", "O programu", "About", "Om programmet"],
-    ["aboutText", "Aurora PDF je slobodan softver (AGPL-3.0) zasnovan na MuPDF-u, Tesseractu i pyHanku. Tvoji fajlovi ne napuštaju ovaj računar.", "Aurora PDF is free software (AGPL-3.0) built on MuPDF, Tesseract and pyHanko. Your files never leave this computer.", "Aurora PDF er fri programvare (AGPL-3.0) bygget på MuPDF, Tesseract og pyHanko. Filene dine forlater aldri denne maskinen."],
+    ["aboutText", "Aurora PDF je softver otvorenog koda pod licencom GNU AGPL-3.0, zasnovan na MuPDF-u, Tesseractu i pyHanku. Dolazi bez ikakve garancije. Tvoji fajlovi ne napuštaju ovaj računar.", "Aurora PDF is open-source software under the GNU AGPL-3.0, built on MuPDF, Tesseract and pyHanko. It comes with no warranty. Your files never leave this computer.", "Aurora PDF er åpen kildekode under GNU AGPL-3.0, bygget på MuPDF, Tesseract og pyHanko. Programmet leveres uten garanti. Filene dine forlater aldri denne maskinen."],
+    ["aboutAuthor", "Napravio i vibe-kodovao Marko Veselinović. © 2026 Marko Veselinović", "Created and vibe-coded by Marko Veselinović. © 2026 Marko Veselinović", "Laget og vibe-kodet av Marko Veselinović. © 2026 Marko Veselinović"],
+    ["sourceCode", "Izvorni kod", "Source code", "Kildekode"],
+    ["licenseLnk", "Licenca", "License", "Lisens"],
+    ["thirdParty", "Ostale licence", "Third-party notices", "Andre lisenser"],
     ["version", "Verzija", "Version", "Versjon"],
     ["noDoc", "Prvo otvori dokument.", "Open a document first.", "Åpne et dokument først."],
   ];

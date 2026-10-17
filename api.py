@@ -183,8 +183,8 @@ class Api:
         return out
 
     def _lang(self) -> str:
-        lang = settings.load().get("lang", "sr")
-        return lang if lang in SUFFIX else "sr"
+        lang = settings.load()["lang"]
+        return lang if lang in SUFFIX else "en"
 
     def _suffix(self, key: str) -> str:
         return SUFFIX[self._lang()][key]

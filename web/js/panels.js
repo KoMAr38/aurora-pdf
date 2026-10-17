@@ -9,6 +9,7 @@
     "spacer", ["combine", "combine"], ["info", "info"],
   ];
   const NEEDS_DOC = new Set(["annotate", "fillsign", "protect", "redact", "watermark", "organize", "ocr", "export", "info"]);
+  const SOURCE = "https://github.com/KoMAr38/aurora-pdf";  // AGPL-3.0: the About panel points to the code of this program
 
   /* ---------- rail ---------- */
   A.buildRail = () => {
@@ -579,8 +580,12 @@
       field("authorName", `<input class="input" id="sAuthor" value="${A.esc(st.author || "")}">`, "authorHint") +
       check("sNight", "nightMode", "nightHint", S.night) +
       field("defaultFit", seg("sFit", [["width", "fitWidth"], ["page", "fitPage"]], st.fit || "width")) +
-      section("aboutT", `<p class="hint">${A.esc(A.t("aboutText"))}</p><div class="kv"><span class="k">${A.esc(A.t("version"))}</span><span class="v">2.0.0</span></div>
-        <button class="lnk" id="sKeys">${A.icon("keyboard", 14)}${A.esc(A.t("shortcuts"))}</button>`);
+      section("aboutT", `<p class="hint">${A.esc(A.t("aboutText"))}</p><p class="hint" id="sAuthorLine">${A.esc(A.t("aboutAuthor"))}</p>
+        <div class="kv"><span class="k">${A.esc(A.t("version"))}</span><span class="v">2.0.0</span></div>
+        <div class="linkrow"><button class="lnk" id="sKeys">${A.icon("keyboard", 14)}${A.esc(A.t("shortcuts"))}</button>
+        <button class="lnk" data-url="${SOURCE}">${A.esc(A.t("sourceCode"))}</button>
+        <button class="lnk" data-url="${SOURCE}/blob/main/LICENSE">${A.esc(A.t("licenseLnk"))}</button>
+        <button class="lnk" data-url="${SOURCE}/blob/main/THIRD_PARTY_NOTICES.md">${A.esc(A.t("thirdParty"))}</button></div>`);
     wire(root);
     A.$("#sLang", root).addEventListener("change", (e) => A.setLang(e.detail));
     A.$("#sTheme", root).addEventListener("change", (e) => A.setTheme(e.detail));
@@ -588,6 +593,7 @@
     A.$("#sNight", root).addEventListener("change", (e) => A.setNight(e.target.checked));
     A.$("#sFit", root).addEventListener("change", (e) => { A.saveSettings({ fit: e.detail }); if (S.doc) A.fit(e.detail); });
     A.$("#sKeys", root).onclick = A.showShortcuts;
+    root.querySelectorAll("[data-url]").forEach((b) => { b.onclick = () => A.call("open_url", { url: b.dataset.url }, { noBusy: true }); });
   };
 
   A.on("doc", ({ prev, doc }) => {
