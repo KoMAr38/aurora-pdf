@@ -617,30 +617,38 @@ def _text_under(page, areas: list) -> bool:
     return False
 
 
-def _text_page(page, flags: int) -> pymupdf.TextPage:
-    """page.get_textpage(flags=flags), but with every layer shown and read as marks are. Layers that are off hide
-    text from get_text, not from MuPDF's redaction, which writes them out anew too (and leaves a pattern in one as
-    it is). And get_text turns the page back about its size as MuPDF draws it, while marks are read through
-    page.derotation_matrix, which goes by the CropBox as written: on a turned page with a /UserUnit the two lie apart,
-    and text under a mark was looked for elsewhere."""
+def _run_all(page, dev, whole: bool = False) -> None:
+    """Run the page's own content (``whole``: with its comments and fields) through ``dev``, then close it: with
+    every layer shown and in the space marks are read in. Layers that are off hide text from the page as shown, not
+    from MuPDF's redaction, which writes them out anew too (and leaves a pattern in one as it is). And MuPDF turns
+    the page back about its size as it draws it, while marks are read through page.derotation_matrix, which goes by
+    the CropBox as written: on a turned page with a /UserUnit the two lie apart."""
     m = pymupdf.mupdf
     mt = page.derotation_matrix
-    tp = m.FzStextPage(m.FzRect(*(page.rect * mt)))
-    dev = m.fz_new_stext_device(tp, m.FzStextOptions(flags))
+    run = m.pdf_run_page_with_usage if whole else m.pdf_run_page_contents_with_usage
     try:  # no usage: nothing is hidden
-        m.pdf_run_page_with_usage(pymupdf._as_pdf_page(page), dev, m.FzMatrix(mt.a, mt.b, mt.c, mt.d, mt.e, mt.f),
-                                  None, m.FzCookie())
+        run(pymupdf._as_pdf_page(page), dev, m.FzMatrix(mt.a, mt.b, mt.c, mt.d, mt.e, mt.f), None, m.FzCookie())
     finally:
         m.fz_close_device(dev)
+
+
+def _text_page(page, flags: int) -> pymupdf.TextPage:
+    """page.get_textpage(flags=flags), but read as _run_all reads the page: text in a layer that is off, or under a
+    mark on a turned page with a /UserUnit, was looked for elsewhere."""
+    m = pymupdf.mupdf
+    tp = m.FzStextPage(m.FzRect(*(page.rect * page.derotation_matrix)))
+    _run_all(page, m.fz_new_stext_device(tp, m.FzStextOptions(flags)), whole=True)
     return pymupdf.TextPage(tp)
 
 
 class _Glyphs(pymupdf.mupdf.FzDevice2):
     """The glyphs drawn through it (filled, stroked, clipped with, as a pattern fills them, or unseen) as
     (glyph, x, y, box, how drawn, colour, opacity), in ``found``. The box is the one MuPDF's redaction reads
-    (pdf_redact_text_filter): from the font's descender to its ascender over the glyph's advance (in a vertical
-    font: across the font's box, along the advance), through the glyph's matrix, a tenth of it in from each side;
-    None where that box has no inside, as MuPDF gives a vertical glyph."""
+    (pdf_redact_text_filter): from the font's descender to its ascender over the glyph's advance, through the
+    glyph's matrix, a tenth of it in from each side; None where that box has no inside, and for a glyph of text
+    written downwards: MuPDF reads that box from where the pen stands, a glyph's height above where the glyph is
+    drawn, and takes the glyph after the one under a mark. What it takes there is not what lies under the mark, so
+    such a glyph lost stops the redaction (_shifted): upright text cannot be redacted."""
 
     def __init__(self):
         super().__init__()
@@ -658,10 +666,7 @@ class _Glyphs(pymupdf.mupdf.FzDevice2):
             font, t, vertical = span.font, span.trm, span.wmode
             a, b = t.a * ca + t.b * cc, t.a * cb + t.b * cd  # from glyph space to here, the origin aside
             c, d = t.c * ca + t.d * cc, t.c * cb + t.d * cd
-            if vertical:
-                across = m.ll_fz_font_bbox(font)
-            else:
-                down, up = m.ll_fz_font_descender(font), m.ll_fz_font_ascender(font)
+            down, up = m.ll_fz_font_descender(font), m.ll_fz_font_ascender(font)
             items, box = m.FzTextSpan(span), None
             for i in range(span.len):
                 it = items.items(i)
@@ -671,10 +676,10 @@ class _Glyphs(pymupdf.mupdf.FzDevice2):
                 if it.gid < 0 and i:  # more letters of the glyph before (a ligature): they go with it
                     self.found.append((it.gid, ox, oy, box, how, *paint))
                     continue
-                adv = m.ll_fz_advance_glyph(font, it.gid, vertical) if it.gid >= 0 else 0.0
-                x0, x1, y0, y1 = (across.x0, across.x1, 0.0, adv) if vertical else (0.0, adv, down, up)
+                adv = m.ll_fz_advance_glyph(font, it.gid, 0) if it.gid >= 0 else 0.0
+                x0, x1, y0, y1 = 0.0, adv, down, up
                 box = None
-                if x0 <= x1 and y0 <= y1:
+                if not vertical and x0 <= x1 and y0 <= y1:
                     xs = (ox + x0 * a + y0 * c, ox + x1 * a + y0 * c, ox + x0 * a + y1 * c, ox + x1 * a + y1 * c)
                     ys = (oy + x0 * b + y0 * d, oy + x1 * b + y0 * d, oy + x0 * b + y1 * d, oy + x1 * b + y1 * d)
                     w, h = (max(xs) - min(xs)) / 10, (max(ys) - min(ys)) / 10
@@ -699,16 +704,10 @@ class _Glyphs(pymupdf.mupdf.FzDevice2):
 
 
 def _placed(page) -> list[tuple]:
-    """The glyphs the page's own content draws (comments and fields aside), as _Glyphs tells them, unrotated, as
-    marks are read, in layers that are off too (see _text_page)."""
-    m = pymupdf.mupdf
+    """The glyphs the page's own content draws (comments and fields aside), as _Glyphs tells them, read as
+    _run_all reads the page."""
     dev = _Glyphs()
-    mt = page.derotation_matrix
-    try:  # no usage: nothing is hidden
-        m.pdf_run_page_contents_with_usage(pymupdf._as_pdf_page(page), dev,
-                                           m.FzMatrix(mt.a, mt.b, mt.c, mt.d, mt.e, mt.f), None, m.FzCookie())
-    finally:
-        m.fz_close_device(dev)
+    _run_all(page, dev)
     return dev.found
 
 
@@ -987,16 +986,18 @@ def _picture_end(data: bytes, j: int, head: bytes = b"", res=None) -> int:
     """After the ID of an inline picture whose dictionary (what stands between BI and ID) is ``head``: the index
     after the EI that ends its data, as MuPDF finds it. MuPDF reads the data first, as much as the size and the
     filters of the picture take, then the first EI before white space, < or /: the data can hold an EI too.
-    ``res``: the resources of the stream, which can name its colour space. A picture MuPDF cannot read ends at the
-    first EI between white space."""
+    ``res``: the resources of the stream, which can name its colour space, in the file the dictionary can point
+    into. A picture MuPDF cannot read ends at the first EI between white space."""
     m = pymupdf.mupdf
     p = j + 2 if data[j:j + 2] == b"\r\n" else j + 1  # MuPDF steps over the byte after ID, CR LF as one
     try:
-        pdf, text = m.pdf_create_document(), head + b" ID"  # text stays: MuPDF reads it where it is
+        own = res is not None and m.pdf_is_dict(res)
+        pdf = m.pdf_get_bound_document(res) if own else m.pdf_create_document()  # for a /CS 5 0 R
+        text = head + b" ID"  # text stays: MuPDF reads it where it is
         info = m.pdf_parse_dict(pdf, m.fz_open_memory(m.python_buffer_data(text), len(text)), m.PdfLexbuf(256))
         rest = m.fz_open_memory(m.python_buffer_data(memoryview(data)[p:]), len(data) - p)
         stack = None
-        if res is not None and m.pdf_is_dict(res):
+        if own:
             stack = m.pdf_resource_stack()
             stack.resources, stack.next = res.m_internal, None  # res outlives the stack: the caller holds it
         m.ll_fz_drop_image(m.ll_pdf_load_inline_image(pdf.m_internal, stack, info.m_internal, rest.m_internal))
@@ -1022,9 +1023,9 @@ _OPERAND = rb"(?:/" + _REG + rb"*|[+\-.0-9]" + _REG + rb"*|true|false|null)" + _
 
 @functools.cache
 def _plain(wanted: tuple[bytes, ...]) -> re.Pattern:
-    """A run of plain operations: numbers, names and keywords, then an operator not ``wanted`` (nor ID). Each token
-    and comment ends where it has to, so the expression never splits one and never looks back far."""
-    stop = b"|".join(re.escape(w) for w in (b"true", b"false", b"null", b"ID", *wanted))
+    """A run of plain operations: numbers, names and keywords, then an operator not ``wanted`` (nor BI or ID). Each
+    token and comment ends where it has to, so the expression never splits one and never looks back far."""
+    stop = b"|".join(re.escape(w) for w in (b"true", b"false", b"null", b"BI", b"ID", *wanted))
     return re.compile(rb"(?:" + _SKIP + rb"(?:" + _OPERAND + _SKIP + rb")*(?!(?:" + stop + rb")" + _END
                       + rb")[^\x00\t\n\f\r ()<>\[\]{}/%+\-.0-9]" + _REG + rb"*" + _END + rb"){0,4096}")
 
@@ -1035,7 +1036,7 @@ def _operators(data: bytes, wanted: tuple[bytes, ...] = (b"BDC", b"Do"), res=Non
     comments skipped, and a run of plain operations (a drawing of many lines) goes by in one match. ``res``: the
     resources of the stream, for the size of an inline picture in a colour space named there (see _picture_end)."""
     plain = _plain(wanted)
-    i, n, args = 0, len(data), []
+    i, n, args, bi = 0, len(data), [], None  # bi: where the dictionary of an inline picture starts, after BI
     while True:
         if not args:
             i = plain.match(data, i).end()
@@ -1053,8 +1054,10 @@ def _operators(data: bytes, wanted: tuple[bytes, ...] = (b"BDC", b"Do"), res=Non
             op = data[s:j]
             if op in wanted:
                 yield op, args, s, j
-            if op == b"ID":
-                j = _picture_end(data, j, data[args[0][0]:args[-1][1]] if args else b"", res)
+            if op == b"BI":
+                bi = j
+            elif op == b"ID" and bi is not None:  # its dictionary: all after BI, as the R of 5 0 R reads as an
+                j, bi = _picture_end(data, j, data[bi:s], res), None  # operator here; an ID without BI is a word
             args = []
         i = j
 
@@ -1147,6 +1150,10 @@ def _items(token: bytes) -> list:
         if token[i] in _WS:
             i += 1
             continue
+        if token[i] == 0x25:  # a comment, to the end of its line: MuPDF reads past what it holds
+            m = _EOL.search(token, i)
+            i = m.start() if m else n
+            continue
         j = max(_object_end(token, i), i + 1)
         part = token[i:min(j, n)]
         if part[:1] in (b"(", b"<"):
@@ -1205,15 +1212,25 @@ def _steady(data: bytes, leading: float | None = 0.0, resets=None, copied: bool 
     def number(span) -> float:
         return float(data[span[0]:span[1]])
 
-    def near(m) -> bool:  # m (a text line matrix) where text of the text object was placed from, as floats tell
+    def scale(m) -> tuple[float, float]:
+        """How close counts as the same place for m (a text line matrix), as floats tell: finer near the origin.
+        And the size of the cells places as far out are kept in: the power of two as wide as that, 1 at least."""
         tol = max(1.0, abs(m[4]), abs(m[5])) / 2 ** 19
-        xs = range(math.floor(m[4] - tol), math.floor(m[4] + tol) + 1)
-        ys = range(math.floor(m[5] - tol), math.floor(m[5] + tol) + 1)
-        cells = placed.values() if len(xs) * len(ys) > 9 else (placed.get((x, y), ()) for x in xs for y in ys)
-        return any(max(abs(a - b) for a, b in zip(m, p)) < tol for cell in cells for p in cell)
+        return tol, 2.0 ** max(0, math.ceil(math.log2(tol)))
 
-    def place(m) -> None:  # placed by the unit square the place lies in
-        placed.setdefault((math.floor(m[4]), math.floor(m[5])), []).append(m)
+    def near(m) -> bool:  # m (a text line matrix) where text of the text object was placed from
+        tol, size = scale(m)
+        for s in {max(1.0, size / 2), size, size * 2}:  # a place that close lies in cells of the size next to it
+            xs = range(math.floor((m[4] - tol) / s), math.floor((m[4] + tol) / s) + 1)
+            ys = range(math.floor((m[5] - tol) / s), math.floor((m[5] + tol) / s) + 1)
+            if any(max(abs(a - b) for a, b in zip(m, p)) < tol for x in xs for y in ys
+                   for p in placed.get((s, x, y), ())):
+                return True
+        return False
+
+    def place(m) -> None:
+        s = scale(m)[1]
+        placed.setdefault((s, math.floor(m[4] / s), math.floor(m[5] / s)), []).append(m)
 
     def back() -> bytes:  # before a move on the line: the step back from a place set to where the line started
         nonlocal tlm, shift
@@ -1480,13 +1497,10 @@ class _Trace(pymupdf.mupdf.FzDevice2):
 
 
 def _trace(page, tag: str, marks=None) -> _Trace:
-    """One run of the page's content through a _Trace, in the space marks and annotations are read in."""
-    m = pymupdf.mupdf
+    """One run of the page's content through a _Trace, read as _run_all reads the page: a word MuPDF takes from a
+    layer that is off counts too."""
     trace = _Trace(tag, marks)
-    mt = page.derotation_matrix
-    m.fz_run_page_contents(m.FzPage(pymupdf._as_pdf_page(page)), trace, m.FzMatrix(mt.a, mt.b, mt.c, mt.d, mt.e, mt.f),
-                           m.FzCookie())
-    m.fz_close_device(trace)
+    _run_all(page, trace)
     return trace
 
 
@@ -1527,7 +1541,10 @@ def _steady_page(doc, page) -> tuple[dict[int, bytes], set[int]]:
     their own back once MuPDF has drawn the page from copies.
     shortcut: a tiling pattern, soft mask or Type3 font without resources of its own takes them from where it is
     used too, and the page MuPDF writes keeps only the names it uses itself, so such a drawing can lose a picture
-    or a font; none of the 1067 files tried has one: give the page copies of them with resources if one turns up."""
+    or a font; none of the 1067 files tried has one: give the page copies of them with resources if one turns up.
+    shortcut: a drawing with resources of its own that names one only where it is drawn holds (MuPDF's renderer
+    looks there next, its copy does not) loses it in the copy, an inline picture its colours; none of the 1248
+    drawings in those files does: lend it the missing names, as above, if one turns up."""
     m = pymupdf.mupdf
     pdf = pymupdf._as_pdf_document(doc)
     contents = page.get_contents()

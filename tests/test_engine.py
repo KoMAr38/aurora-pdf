@@ -1158,24 +1158,27 @@ def test_redaction_removes_comments_fields_and_links_under_the_mark(tmp_path):
     assert [a.info["content"] for a in again[0].annots()] == ["langt unna"]
 
 
+@pytest.mark.parametrize("listed", (True, False))  # a pop-up belongs in /Annots too: such writers can leave it out
 @pytest.mark.parametrize("rot", (0, 90))
 @pytest.mark.parametrize("box", tuple(ODD_BOXES))
-def test_redaction_reaches_comments_written_into_the_page_list(box, rot):
+def test_redaction_reaches_comments_written_into_the_page_list(box, rot, listed):
     """Some writers put a comment's dictionary in /Annots itself instead of an object of its own. PyMuPDF does
     not see those, and the words in one under the mark (and in its pop-up) stayed in the redacted file."""
     doc, page = _odd_page(box, rot)
     pop = doc.get_new_xref()
     doc.update_object(pop, "<</Type/Annot/Subtype/Popup/Rect[400 600 500 700]/Contents(ring 4711)>>")
+    entry = f"{pop} 0 R" if listed else ""
     doc.xref_set_key(page.xref, "Annots", f"[<</Type/Annot/Subtype/Text/Rect[205 400 225 420]/Contents(ring 4711)"
-                                          f"/Popup {pop} 0 R>> {pop} 0 R <</Type/Annot/Subtype/Square"
+                                          f"/Popup {pop} 0 R>> {entry} <</Type/Annot/Subtype/Square"
                                           f"/Rect[220 600 300 650]/Contents(langt unna)>>]")
     doc = pymupdf.open("pdf", doc.tobytes())
     page = doc[0]
     hit = pymupdf.Rect(pt.search_rects(doc, "MARK")[0]["r"])
     an.mark_redaction(page, hit + (-4, -4, 4, 4))
     assert an.apply_redactions(doc) == 1
-    out = doc.tobytes(garbage=3, deflate=False, expand=255)
-    assert b"4711" not in out and b"langt unna" in out and "MARK" not in pymupdf.open("pdf", out)[0].get_text()
+    out = doc.tobytes(garbage=0, deflate=False, expand=255)  # the pop-up goes even with no garbage collection
+    # words, not bare digits: the file's random /ID and the offsets in its xref table can hold "4711"
+    assert b"ring 4711" not in out and b"langt unna" in out and "MARK" not in pymupdf.open("pdf", out)[0].get_text()
 
 
 def test_redaction_wipes_the_picture_under_the_mark(tmp_path):
@@ -1433,7 +1436,8 @@ def test_redaction_leaves_drawings_and_lists_that_other_pages_share():
     assert an.apply_redactions(doc) == 1
     assert "4711" not in doc[0].get_text() and doc[1].get_text().split() == ["felles", "4711", "navn", "4711"]
     raw = doc.tobytes(garbage=1, deflate=False, expand=255)
-    assert raw.count(b"4711") == 2 and b"aurora-" not in raw  # once in the drawing, once in the list: page 2's
+    # once in the drawing, once in the list: page 2's
+    assert raw.count(b"felles 4711") == 1 and raw.count(b"navn 4711") == 1 and b"aurora-" not in raw
 
 
 def test_redaction_takes_a_tagged_picture_from_the_tree():
@@ -1457,7 +1461,7 @@ def test_redaction_takes_a_tagged_picture_from_the_tree():
     assert an.apply_redactions(doc) == 1
     saved = pymupdf.open("pdf", doc.tobytes(garbage=1))
     raw = saved.tobytes(garbage=1, deflate=False, expand=255)
-    assert b"4711" not in raw and b"bilde langt unna" in raw
+    assert b"bilde 4711" not in raw and b"bilde langt unna" in raw
     pictures = {x for x in range(1, saved.xref_length()) if saved.xref_get_key(x, "Subtype")[1] == "/Image"}
     assert pictures == {x for img in saved[0].get_images(full=True) for x in img[:2] if x}  # and their masks
 
@@ -1480,7 +1484,7 @@ def test_redaction_takes_a_tagged_comments_drawing_from_the_tree():
     doc = pymupdf.open("pdf", doc.tobytes())
     an.mark_redaction(doc[0], (90, 90, 310, 150))
     assert an.apply_redactions(doc) == 1
-    assert b"4711" not in doc.tobytes(garbage=1, deflate=False, expand=255)
+    assert b"ring 4711" not in doc.tobytes(garbage=1, deflate=False, expand=255)
 
 
 @pytest.mark.parametrize("src, want", (
@@ -1803,6 +1807,30 @@ def test_redaction_checks_text_in_a_layer_that_is_off(monkeypatch):
         an.apply_redactions(doc)
 
 
+@pytest.mark.parametrize("tree", (False, True))
+def test_redaction_takes_the_words_of_marked_content_around_a_layer_that_is_off(tree):
+    """Marked content that says words of its own (an /ActualText, or a structure element by its number) around a
+    layer that is off, with the word under the mark in that layer: MuPDF's redaction takes the word, but the look at
+    what each marked content draws read the page as shown, missed nothing, and gave the words back."""
+    doc = pymupdf.open()
+    ocg = doc.add_ocg("lag", on=False)
+    head = b"/Span <</MCID 0>> BDC " if tree else b"/Span <</ActualText (SECRET-ALT)>> BDC "
+    _page_of(head + b"/OC /X BDC BT /F9 12 Tf 72 700 Td (SECRET1) Tj ET EMC BT /F9 12 Tf 72 640 Td (and more) Tj ET "
+             b"EMC" + KEEP, f"/Properties<</X {ocg} 0 R>>", doc)
+    if tree:
+        root, elem = doc.get_new_xref(), doc.get_new_xref()
+        doc.update_object(elem, f"<</Type/StructElem/S/Span/P {root} 0 R/Pg {doc.page_xref(0)} 0 R/K 0"
+                                f"/ActualText(SECRET1 and more)>>")  # MuPDF takes SECRET-ALT itself, not this
+        doc.update_object(root, f"<</Type/StructTreeRoot/K[{elem} 0 R]/ParentTree<</Nums[0 [{elem} 0 R]]>>>>")
+        doc.xref_set_key(doc.pdf_catalog(), "StructTreeRoot", f"{root} 0 R")
+        doc.xref_set_key(doc.page_xref(0), "StructParents", "0")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    an.mark_redaction(doc[0], (60, 75, 200, 100))
+    assert an.apply_redactions(doc) == 1
+    raw = _raw(doc)
+    assert b"SECRET" not in raw and b"keep-alt" in raw
+
+
 @pytest.mark.parametrize("rot", (90, 180, 270))
 def test_redaction_reaches_text_in_a_pattern_on_a_turned_page_with_a_user_unit(rot):
     """Marks are read through page.derotation_matrix, which turns the page about its CropBox as written, get_text
@@ -1887,6 +1915,41 @@ def test_redaction_stops_at_glyphs_their_font_puts_elsewhere(mark, left):
             an.apply_redactions(doc)
     else:
         assert an.apply_redactions(doc) == 1 and doc[0].get_text().split() == ["KEEPME"]
+
+
+UPRIGHT = ("<</Type/Font/Subtype/Type0/BaseFont/HeiseiMin-W3/Encoding/Identity-V/DescendantFonts[<</Type/Font"
+           "/Subtype/CIDFontType0/BaseFont/HeiseiMin-W3/CIDSystemInfo<</Registry(Adobe)/Ordering(Japan1)/Supplement 2"
+           ">>/FontDescriptor<</Type/FontDescriptor/FontName/HeiseiMin-W3/Flags 4/FontBBox[-123 -257 1124 910]"
+           "/ItalicAngle 0/Ascent 910/Descent -257/CapHeight 709/StemV 69>>>>]>>")  # MuPDF brings a font for it
+
+
+@pytest.mark.parametrize("mark, refused", (
+    ((290, 113, 310, 140), True),  # い and う, with room: MuPDF took お, away from the mark
+    ((290, 117, 310, 136), True),  # い and う, tight
+    ((60, 280, 200, 300), False),  # text across the page, away from the column
+))
+def test_redaction_stops_at_upright_text(mark, refused):
+    """MuPDF's redaction reads a glyph of text written downwards from where the pen stands, a glyph's height above
+    where it draws it (あいうえお here, a glyph every 12 points from 102.6 down). A mark over い and う with room
+    took お too, away from the mark, and the check, which reads glyphs as MuPDF does, let it go. Upright text
+    cannot be redacted: nothing is, and the program says so. Text across the page next to it can."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    c = doc.get_new_xref()
+    doc.update_object(c, "<<>>")
+    doc.update_stream(c, b"BT /FV 12 Tf 1 0 0 1 300 700 Tm <034b034d034f03510353> Tj ET"
+                         b" BT /F9 12 Tf 72 500 Td (SECRET1) Tj ET")
+    doc.xref_set_key(page.xref, "Contents", f"{c} 0 R")
+    doc.xref_set_key(page.xref, "Resources", f"<</Font<</FV {UPRIGHT}/F9<</Type/Font/Subtype/Type1/BaseFont/Helvetica"
+                                             f">>>>>>")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    assert doc[0].get_text().split() == list("あいうえお") + ["SECRET1"]
+    an.mark_redaction(doc[0], mark)
+    if refused:
+        with pytest.raises(ValueError, match="REDACT_MOVED"):
+            an.apply_redactions(doc)
+    else:
+        assert an.apply_redactions(doc) == 1 and doc[0].get_text().split() == list("あいうえお")
 
 
 def test_redaction_reads_the_place_of_a_glyph_as_mupdf_does():
@@ -2052,6 +2115,8 @@ SIZE_CASES = {  # a line, and what on it goes (searched for, the room before it 
     # a line break in a string reads as one LF; white space in a hex string as nothing, a stray byte there as 0
     "line breaks and hex": ((b"BT /F9 12 Tf 0.5 Tc 72 700 Td (SECRET1) Tj (a\r\nb\rc) Tj <2D 2 D41 x> Tj "
                              b"/F9 8 Tf (kept) Tj ET"), "SECRET1"),
+    "a comment in a TJ": ((b"BT /F9 12 Tf 72 700 Td (SECRET1) Tj ET BT /F9 12 Tf 72 500 Td [(Total:) %(note)\n ( 12)] TJ "
+                           b"/F9 8 Tf (kept) Tj ET"), "SECRET1"),  # MuPDF reads past what the comment holds
 }
 
 
@@ -2255,15 +2320,20 @@ def test_steady_turns_quotes_into_moves_and_shows():
         b"BT 1 0 0 1 0 0 Tm  0.000001 Tc 0.000001 Tw (a) Tj ET"
 
 
-@pytest.mark.parametrize("cs", ("/G", "/CS0"))  # a colour space of the page's resources: three bytes a pixel
+@pytest.mark.parametrize("cs", ("/G", "/CS0", "ref"))  # CS0: of the page's resources, three bytes a pixel
 def test_redaction_leaves_an_inline_picture_whose_bytes_read_ei_as_it_was(cs):
     """MuPDF reads an inline picture by its size, so its bytes can read ' EI BT ': the scanner took the first EI
-    between white space for the end, read the rest of the pixels as content, and _steady wrote into them."""
+    between white space for the end, read the rest of the pixels as content, and _steady wrote into them. A
+    dictionary that points to an object (/CS 5 0 R) was read without the file, and so was its picture."""
+    doc = pymupdf.open()
+    if cs == "ref":
+        cs = f"{doc.get_new_xref()} 0 R"
+        doc.update_object(int(cs.split()[0]), "/DeviceGray")
     pixels = bytes(range(0, 200, 20)) + b" EI BT " + bytes(range(255, 15, -16))
-    w = 32 if cs == "/G" else 32 // 3 + 1  # 33 bytes from 11 pixels: one more byte of the run
-    pixels = pixels + b"\x80" * (3 * w - len(pixels)) if cs != "/G" else pixels
+    w = 32 // 3 + 1 if cs == "/CS0" else 32  # 33 bytes from 11 pixels: one more byte of the run
+    pixels = pixels + b"\x80" * (3 * w - len(pixels)) if cs == "/CS0" else pixels
     picture = b"q 320 0 0 40 72 300 cm BI /W %d /H 1 /BPC 8 /CS %s ID " % (w, cs.encode()) + pixels + b" EI Q "
-    doc = pymupdf.open("pdf", _page_of(SECRET + picture + KEEP, "/ColorSpace<</CS0/DeviceRGB>>").tobytes())
+    doc = pymupdf.open("pdf", _page_of(SECRET + picture + KEEP, "/ColorSpace<</CS0/DeviceRGB>>", doc).tobytes())
     before = doc[0].get_pixmap(dpi=72, clip=(72, 452, 392, 492)).samples
     an.mark_redaction(doc[0], (60, 75, 200, 100))
     assert an.apply_redactions(doc) == 1
@@ -2282,13 +2352,51 @@ def test_redaction_reads_on_after_an_inline_picture_whose_ei_follows_its_data():
     assert _same(before, _away(doc[0], mark))
 
 
-def test_steady_takes_a_page_of_moves_in_its_stride():
+def test_redaction_keeps_a_picture_another_page_draws_after_an_inline_picture():
+    """Page 2 shares its resources and a picture with page 1, and draws the picture after an inline picture whose
+    dictionary points to an object and whose bytes read ' EI (': the scanner ended the inline picture there, read
+    the rest of the stream as a string, did not see page 2 draw the picture, and took it from its resources when
+    the redaction on page 1 gave page 1 a new one."""
+    doc = pymupdf.open()
+    cs, img, res = doc.get_new_xref(), doc.get_new_xref(), doc.get_new_xref()
+    doc.update_object(cs, "/DeviceGray")
+    doc.update_object(img, "<</Type/XObject/Subtype/Image/Width 2/Height 2/BitsPerComponent 8/ColorSpace/DeviceRGB>>")
+    doc.update_stream(img, bytes([255, 0, 0] * 4))
+    doc.update_object(res, f"<<{HELV}/XObject<</Im0 {img} 0 R>>>>")
+    pixels = (b"\x10\x30 EI ( " + bytes(range(0, 255, 3)))[:64]
+    for content in (b"q 200 0 0 200 100 400 cm /Im0 Do Q " + SECRET,
+                    b"q BI /W 64 /H 1 /BPC 8 /CS %d 0 R ID " % cs + pixels + b" EI Q q 200 0 0 200 100 400 cm /Im0 Do Q"):
+        page = doc.new_page(width=612, height=792)
+        c = doc.get_new_xref()
+        doc.update_object(c, "<<>>")
+        doc.update_stream(c, content)
+        doc.xref_set_key(page.xref, "Contents", f"{c} 0 R")
+        doc.xref_set_key(page.xref, "Resources", f"{res} 0 R")
+    doc = pymupdf.open("pdf", doc.tobytes())
+    before = doc[1].get_pixmap(dpi=36, clip=(110, 200, 290, 380)).samples
+    an.mark_redaction(doc[0], (150, 250, 250, 300))  # over part of the picture on page 1
+    assert an.apply_redactions(doc) == 1
+    assert pymupdf.open("pdf", doc.tobytes())[1].get_pixmap(dpi=36, clip=(110, 200, 290, 380)).samples == before
+
+
+@pytest.mark.parametrize("x", (b"72", b"600000"))  # far out, as a drawing with a tiny cm has it
+def test_steady_takes_a_page_of_moves_in_its_stride(x):
     """A page set as one text object with a move per word: _steady looked for each place among all those before
-    (6 s for 4000 words), now among those next to it."""
+    (6 s for 4000 words, and 45 s for 8000 far out, where floats tell places apart less finely), now among those
+    next to it."""
     words = b" ".join(b"-413 -12 Td (w) Tj" if i % 60 == 0 else b"7 0 Td (w) Tj" for i in range(8000))
     t0 = time.perf_counter()
-    an._steady(b"BT /F9 10 Tf 72 760 Td " + words + b" ET")
+    an._steady(b"BT /F9 10 Tf " + x + b" 760 Td " + words + b" ET")
     assert time.perf_counter() - t0 < 2
+
+
+@pytest.mark.parametrize("x, step", ((b"72", b"0"), (b"600000", b"0"), (b"-600000.5", b"0"), (b"3000000", b"0"),
+                                     (b"1048575.5", b"1"), (b"1048576.5", b"-1")))  # 1 apart, across 2**20
+def test_steady_nudges_an_overprint_near_and_far(x, step):
+    """Where a move ends counts as where text was placed from before as floats tell, finer near the origin than far
+    out: an overprint gets its nudge everywhere, also where the two places lie in cells of different sizes."""
+    data = b"BT /F9 12 Tf " + x + b" 500 Td (A) Tj " + step + b" 0 Td (A) Tj ET"
+    assert an._steady(data).count(b" Td ") == 3
 
 
 def test_scanner_steps_over_a_comment_in_an_array():
@@ -2301,13 +2409,14 @@ def test_scanner_steps_over_a_comment_in_an_array():
 
 def test_marked_content_scanner_reads_tokens_as_mupdf_does():
     """Only real BDC and Do operators count, with their operands: not in strings, comments, names, inline picture
-    data or longer words, and not where a long run of plain operations (read in one match) ends."""
+    data or longer words, and not where a long run of plain operations (read in one match) ends. An ID without BI
+    is a word MuPDF skips, no picture."""
     lines = b"".join(b"%d %d m %d %d l S\n" % (i, i, i + 3, i + 2) for i in range(10000))
-    data = (b"(BDC) Tj % BDC Do\n/BDC /Do BDCx xDo BI /W 1 /H 1 ID BDC EI " + lines +
+    data = (b"ID /Fm2 Do (BDC) Tj % BDC Do\n/BDC /Do BDCx xDo BI /W 1 /H 1 ID BDC EI " + lines +
             b"/P <</MCID 0 /A [(x) <41>] >>BDC /Fm0 Do/Fm1 Do\x00/Span/Q BDC true false null Do")
     found = [(op, [data[s:e] for s, e in args]) for op, args, *_ in an._operators(data)]
-    assert found == [(b"BDC", [b"/P", b"<</MCID 0 /A [(x) <41>] >>"]), (b"Do", [b"/Fm0"]), (b"Do", [b"/Fm1"]),
-                     (b"BDC", [b"/Span", b"/Q"]), (b"Do", [b"true", b"false", b"null"])]
+    assert found == [(b"Do", [b"/Fm2"]), (b"BDC", [b"/P", b"<</MCID 0 /A [(x) <41>] >>"]), (b"Do", [b"/Fm0"]),
+                     (b"Do", [b"/Fm1"]), (b"BDC", [b"/Span", b"/Q"]), (b"Do", [b"true", b"false", b"null"])]
 
 
 def test_doc_annots_lists_pages():
