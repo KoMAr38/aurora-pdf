@@ -164,6 +164,13 @@
     pg.ov = el.children[3];
     pg.lk = el.children[4];
     pg.fx = el.children[5];
+    // a rebuild while a field is pressed would swap it under the pointer, and the click would be lost
+    pg.fx.addEventListener("pointerdown", () => {
+      pg.pressing = true;
+      const up = () => { pg.pressing = false; removeEventListener("pointerup", up, true); removeEventListener("pointercancel", up, true); };
+      addEventListener("pointerup", up, true);
+      addEventListener("pointercancel", up, true);
+    });
     pg.lo.src = A.pageUrl(pg.rev, LO);
     pg.hiW = 0;
     loadHi(pg);
@@ -359,7 +366,7 @@
     const fx = pg.fx, info = pg.info;
     if (!fx || !info) return;
     const focused = fx.contains(document.activeElement) ? document.activeElement : null;
-    if (focused && focused.tagName !== "BUTTON") { pg.fieldsStale = true; return; } // a box holds nothing typed
+    if ((focused && focused.tagName !== "BUTTON") || pg.pressing) { pg.fieldsStale = true; return; } // a box holds nothing typed
     pg.fieldsStale = false;
     fx.textContent = "";
     const editable = A.can("form");

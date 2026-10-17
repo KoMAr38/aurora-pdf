@@ -548,6 +548,37 @@ def test_fill_form_fields(ui):
     assert max(abs(box["x"] - x0), abs(box["y"] - y0), abs(box["x"] + box["width"] - x1), abs(box["y"] + box["height"] - y1)) < 1.5
 
 
+def test_a_click_on_a_check_box_counts_right_after_typing_or_choosing(ui):
+    """The layer waits to be rebuilt while a field holds the keyboard. Pressing on the check box took the
+    keyboard away and rebuilt the layer before the button came up, so the box under the pointer was new
+    and the click was lost."""
+    ui.open("report")
+    ui.show_page(2)
+    page = ui.page
+    chk = page.locator('.pg[data-i="2"] .fx .chk[title="samtykke"]')
+
+    def click_like_a_hand():
+        b = chk.bounding_box()
+        page.mouse.move(b["x"] + b["width"] / 2, b["y"] + b["height"] / 2)
+        page.mouse.down()
+        page.wait_for_timeout(90)
+        page.mouse.up()
+        ui.idle()
+
+    page.locator('.pg[data-i="2"] .fx input[title="navn"]').click()
+    page.keyboard.type("Kari")  # typed, then straight to the box
+    click_like_a_hand()
+    assert "on" in chk.get_attribute("class").split()
+    sel = page.locator('.pg[data-i="2"] .fx select[title="avdeling"]')
+    sel.focus()
+    sel.select_option("Økonomi")  # the list keeps the keyboard after the choice
+    ui.idle()
+    click_like_a_hand()
+    assert "on" not in chk.get_attribute("class").split()
+    vals = ui.js("Aurora.V.pages[2].info.fields.reduce((o, f) => (o[f.n] = f.v, o), {})")
+    assert vals["navn"] == "Kari" and vals["avdeling"] == "Økonomi" and not vals["samtykke"]
+
+
 def test_dropdown_shows_labels_and_stores_values(ui, tmp_path):
     doc = pymupdf.open(ui.docs["plain"])
     w = pymupdf.Widget()

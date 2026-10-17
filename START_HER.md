@@ -23,7 +23,7 @@ Siste linje fra installasjonssjekken skal være:
 All checks passed. Report: C:\Users\<bruker>\AppData\Roaming\AuroraPDF\selftest.txt
 ```
 
-Siste linje fra `2_TESTER.bat` skal vise `460 passed, 4 skipped`. De fire som hoppes over, gjelder språket ved første start på andre systemer enn Windows.
+Siste linje fra `2_TESTER.bat` skal vise `461 passed, 4 skipped`. De fire som hoppes over, gjelder språket ved første start på andre systemer enn Windows.
 
 ## Bruk
 
