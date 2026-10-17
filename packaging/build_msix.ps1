@@ -39,6 +39,10 @@ Copy-Item -Recurse 'dist\AuroraPDF' $layout
 Copy-Item 'LICENSE', 'THIRD_PARTY_NOTICES.md' $layout
 Copy-Item 'packaging\AppxManifest.xml' $layout
 Copy-Item -Recurse 'packaging\assets' (Join-Path $layout 'Assets')
+# python-docx ships the unpacked source of its default.docx. Its [Content_Types].xml is a name the package format
+# keeps for itself (makeappx: 0x8007007b), and python-docx reads only default.docx
+$docxSource = Join-Path $layout '_internal\docx\templates\default-docx-template'
+if (Test-Path $docxSource) { Move-Item $docxSource ('_to_delete\default-docx-template-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 
 # 3. resources.pri, so Windows picks the icon size and the unplated taskbar icons. Only the icons are indexed:
 #    the program's own files are not resources
