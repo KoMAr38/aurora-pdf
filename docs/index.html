@@ -207,7 +207,7 @@ footer a { color: var(--muted); }
 </div>
 <script>
 // shortcut: the Store link goes in here once Aurora PDF is live in the Microsoft Store
-const STORE_URL = ''
+const STORE_URL = 'https://apps.microsoft.com/detail/9NNP86TFNNTR'
 if (STORE_URL) for (const a of document.querySelectorAll('.store-link')) {
   a.href = STORE_URL; a.removeAttribute('aria-disabled')
   if (a.textContent.startsWith('Coming soon')) a.textContent = 'Get Aurora PDF on the Microsoft Store'

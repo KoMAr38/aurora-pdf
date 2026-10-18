@@ -220,6 +220,6 @@ I en prøve med 2 576 sladdinger av ord, linjer og avsnitt i 725 PDF-filer, fra 
 
 AGPL-3.0, fordi PyMuPDF har den lisensen. Skriftene er under SIL Open Font License og OCR-dataene under Apache-2.0. Alle komponentene står i `THIRD_PARTY_NOTICES.md`.
 
-En ferdig pakket versjon skal selges i Microsoft Store. AGPL tillater salg. Pakken bygges fra koden i dette repoet, og alle kan fortsatt laste ned koden, bygge programmet selv og dele det videre under AGPL-3.0. Den som kjøper, betaler for en versjon som installeres fra Store og oppdateres derfra.
+En ferdig pakket versjon selges i Microsoft Store: https://apps.microsoft.com/detail/9NNP86TFNNTR. AGPL tillater salg. Pakken bygges fra koden i dette repoet, og alle kan fortsatt laste ned koden, bygge programmet selv og dele det videre under AGPL-3.0. Den som kjøper, betaler for en versjon som installeres fra Store og oppdateres derfra.
 
 Aurora PDF er laget og vibe-kodet av Marko Veselinović. Programmet er ikke tilknyttet Adobe.
