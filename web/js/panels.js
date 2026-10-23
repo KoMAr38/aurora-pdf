@@ -432,7 +432,7 @@
     const pref = (S.settings.ocr_langs || (own ? own + "+eng" : "eng")).split("+");
     root.innerHTML = head("ocr", "ocrTitle", "ocrSub") +
       `<div class="status ${doc.scanned ? "warn" : "ok"}">${A.icon(doc.scanned ? "ocr" : "check", 18)}<div><b>${A.esc(A.t(doc.scanned ? "looksScanned" : "hasText"))}</b><small>${A.esc(A.t(doc.scanned ? "looksScannedHint" : "hasTextHint"))}</small></div></div>` +
-      `<div class="field"><label>${A.esc(A.t("ocrLangs"))}</label>${Object.entries(langs).map(([code, name]) => check("ol_" + code, name, "", pref.includes(code))).join("")}</div>` +
+      `<div class="field"><label>${A.esc(A.t("ocrLangs"))}</label><div class="langgrid">${Object.entries(langs).map(([code, name]) => check("ol_" + code, name, "", pref.includes(code))).join("")}</div></div>` +
       field("quality", seg("ocrQ", [["200", "fast"], ["300", "accurate"]], "300")) +
       pagesField("ocrPg") + check("ocrForce", "ocrForce", "ocrForceHint", false) +
       `<div class="actions">${btn("ocrGo", "ocrRun", "ocr", "primary block")}</div><p class="hint">${A.esc(A.t("ocrNote"))}</p>`;

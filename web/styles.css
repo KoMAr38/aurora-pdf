@@ -1053,6 +1053,8 @@ input[type="range"]::-webkit-slider-thumb {
 .check input:focus-visible + .box { box-shadow: 0 0 0 3px rgba(var(--sky-rgb), 0.3); }
 .check .lbl { display: flex; flex-direction: column; gap: 1px; }
 .check .lbl small { color: var(--faint); font-size: 12px; }
+.langgrid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10px; } /* 23 OCR languages in two columns, so the button stays on screen */
+.langgrid .check { margin-top: 8px; }
 
 .seg {
   display: flex;
