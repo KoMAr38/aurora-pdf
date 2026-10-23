@@ -281,8 +281,8 @@
     });
 
   /* ---------- formatting ---------- */
-  const LOCALE = { sr: "sr-Latn-RS", en: "en-GB", no: "nb-NO" };
-  A.fmtNum = (n, digits = 0) => n.toLocaleString(LOCALE[S.lang] || "en-GB", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+  const LOCALE = { sr: "sr-Latn-RS", en: "en-GB", no: "nb-NO", pt: "pt-PT" }; // the rest are their own locale tags
+  A.fmtNum = (n, digits = 0) => n.toLocaleString(LOCALE[S.lang] || S.lang, { maximumFractionDigits: digits, minimumFractionDigits: digits });
   A.fmtBytes = (n) => {
     if (!n && n !== 0) return "";
     const u = ["B", "KB", "MB", "GB"];
@@ -306,7 +306,7 @@
     return A.t("dateFmt", { d: +m[3], m: A.t("month" + +m[2]), y: m[1] }) + (m[4] ? ` ${m[4]}:${m[5]}` : "");
   };
   /** Numeric date (and time) the way the interface language writes it: 13.10.2026, 13. 10. 2026., 13/10/2026. */
-  A.fmtShort = (d = new Date(), time = false) => d.toLocaleString(LOCALE[S.lang] || "en-GB",
+  A.fmtShort = (d = new Date(), time = false) => d.toLocaleString(LOCALE[S.lang] || S.lang,
     Object.assign({ day: "numeric", month: "numeric", year: "numeric" }, time ? { hour: "2-digit", minute: "2-digit" } : {}));
   A.dirname = (p) => (p || "").replace(/[\\/][^\\/]*$/, "");
   A.basename = (p) => (p || "").split(/[\\/]/).pop();

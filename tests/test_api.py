@@ -1113,16 +1113,20 @@ def test_settings_changed_from_two_threads_keep_both_changes(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("langid, lang", [(0x0414, "no"), (0x0814, "no"), (0x241A, "sr"), (0x081A, "sr"),
-                                          (0x041A, "sr"), (0x141A, "sr"), (0x0409, "en"), (0x0407, "en")])
+                                          (0x041A, "sr"), (0x141A, "sr"), (0x0409, "en"), (0x0407, "de"),
+                                          (0x0C07, "de"), (0x0416, "pt-BR"), (0x0816, "pt"), (0x0411, "ja"),
+                                          (0x0422, "uk"), (0x042F, "mk"), (0x0412, "en")])
 def test_a_first_start_speaks_the_language_of_windows(langid, lang):
-    """nb-NO, nn-NO, Serbian, Croatian and Bosnian, English and German display languages of Windows."""
+    """Norwegian, Serbian/Croatian/Bosnian, German (also Austrian), both Portuguese, Japanese, Ukrainian and
+    Macedonian Windows get their own language; Korean, which the program does not have, gets English."""
     from core import settings
 
     assert settings.lang_for(langid) == lang
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows asks the system, not LANG")
-@pytest.mark.parametrize("tag, lang", [("nb_NO.UTF-8", "no"), ("sr_RS@latin", "sr"), ("de_DE.UTF-8", "en"), ("", "en")])
+@pytest.mark.parametrize("tag, lang", [("nb_NO.UTF-8", "no"), ("sr_RS@latin", "sr"), ("de_DE.UTF-8", "de"), ("pt_BR.UTF-8", "pt-BR"),
+                                       ("pt_PT.UTF-8", "pt"), ("ko_KR.UTF-8", "en"), ("", "en")])
 def test_elsewhere_the_first_language_comes_from_lang(tag, lang, monkeypatch):
     from core import settings
 

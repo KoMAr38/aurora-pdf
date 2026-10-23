@@ -575,7 +575,7 @@
   PANELS.settings = (root) => {
     const st = S.settings || {};
     root.innerHTML = head("settings", "settingsTitle", "") +
-      field("language", seg("sLang", [["sr", "Srpski"], ["en", "English"], ["no", "Norsk"]], S.lang)) +
+      field("language", `<select class="input" id="sLang">${A.LANGS.map(([v, l]) => `<option value="${v}"${v === S.lang ? " selected" : ""}>${A.esc(l)}</option>`).join("")}</select>`) +
       field("theme", seg("sTheme", [["system", "themeSystem"], ["light", "themeLight"], ["dark", "themeDark"]], st.theme || "system"), "themeHint") +
       field("authorName", `<input class="input" id="sAuthor" value="${A.esc(st.author || "")}">`, "authorHint") +
       check("sNight", "nightMode", "nightHint", S.night) +
@@ -587,7 +587,7 @@
         <button class="lnk" data-url="${SOURCE}/blob/main/LICENSE">${A.esc(A.t("licenseLnk"))}</button>
         <button class="lnk" data-url="${SOURCE}/blob/main/THIRD_PARTY_NOTICES.md">${A.esc(A.t("thirdParty"))}</button></div>`);
     wire(root);
-    A.$("#sLang", root).addEventListener("change", (e) => A.setLang(e.detail));
+    A.$("#sLang", root).addEventListener("change", (e) => A.setLang(e.target.value));
     A.$("#sTheme", root).addEventListener("change", (e) => A.setTheme(e.detail));
     A.$("#sAuthor", root).addEventListener("change", (e) => A.saveSettings({ author: e.target.value.trim() }));
     A.$("#sNight", root).addEventListener("change", (e) => A.setNight(e.target.checked));

@@ -246,7 +246,7 @@
     // only voices that run on this computer: an online voice sends the text to a speech service
     const voices = all.filter((x) => x.localService);
     if (!voices.length) return A.toast(A.t("noSpeech"), "bad");
-    const want = { sr: ["sr", "hr", "bs"], no: ["nb", "no", "nn"], en: ["en"] }[S.lang] || ["en"];
+    const want = { sr: ["sr", "hr", "bs"], no: ["nb", "no", "nn"] }[S.lang] || [S.lang.toLowerCase()];
     const v = voices.find((x) => want.some((w) => x.lang.toLowerCase().startsWith(w))) || voices.find((x) => x.default) || voices[0];
     const u = new SpeechSynthesisUtterance(text);
     u.voice = v;

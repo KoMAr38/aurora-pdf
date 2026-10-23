@@ -39,9 +39,19 @@ def _file() -> Path:
     return data_dir() / "settings.json"
 
 
+# Windows primary language id -> UI language (Croatian and Bosnian share Serbian's id; js/lang has the rest)
+PRIMARY = {0x14: "no", 0x1A: "sr", 0x1D: "sv", 0x06: "da", 0x07: "de", 0x08: "el", 0x10: "it", 0x0C: "fr",
+           0x11: "ja", 0x0A: "es", 0x16: "pt", 0x19: "ru", 0x22: "uk", 0x2F: "mk", 0x0E: "hu", 0x02: "bg",
+           0x18: "ro", 0x1F: "tr", 0x0B: "fi"}
+# ISO 639-1 codes from the LANG variable that are not the UI code itself
+ALIASES = {"nb": "no", "nn": "no", "hr": "sr", "bs": "sr"}
+
+
 def lang_for(langid: int) -> str:
-    """UI language for a Windows LANGID: Norwegian, Serbian (Croatian and Bosnian share its primary id) or English."""
-    return {0x14: "no", 0x1A: "sr"}.get(langid & 0x3FF, "en")
+    """UI language for a Windows LANGID, English when the program does not have it."""
+    if langid == 0x0416:
+        return "pt-BR"
+    return PRIMARY.get(langid & 0x3FF, "en")
 
 
 def system_lang() -> str:
@@ -49,8 +59,11 @@ def system_lang() -> str:
     if os.name == "nt":
         import ctypes
         return lang_for(ctypes.windll.kernel32.GetUserDefaultUILanguage())
-    tag = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "")[:2].lower()
-    return "no" if tag in ("nb", "nn", "no") else "sr" if tag in ("sr", "hr", "bs") else "en"
+    tag = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
+    if tag.startswith("pt_BR"):
+        return "pt-BR"
+    code = ALIASES.get(tag[:2].lower(), tag[:2].lower())
+    return code if code in PRIMARY.values() else "en"
 
 
 def load() -> dict:

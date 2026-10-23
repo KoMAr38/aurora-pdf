@@ -7,6 +7,7 @@ by hand next to the code that builds them.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -163,6 +164,16 @@ def defined_rows() -> list[list[str]]:
         rows.append(cells)
     return rows
 
+
+
+def extra_langs() -> dict[str, tuple[str, dict[str, str]]]:
+    """web/js/lang/<code>.js as {code: (name, {key: text})}; each file is Aurora.addLang("code", "Name", {json})."""
+    out = {}
+    for f in sorted((WEB / "js" / "lang").glob("*.js")):
+        m = re.search(r'(?s)Aurora\.addLang\("([\w-]+)", "([^"]+)", (\{.*\})\);\s*$', f.read_text(encoding="utf-8"))
+        assert m, f"{f.name}: expected Aurora.addLang(\"code\", \"Name\", {{...}});"
+        out[m.group(1)] = (m.group(2), json.loads(m.group(3)))
+    return out
 
 if __name__ == "__main__":
     keys = static_keys()

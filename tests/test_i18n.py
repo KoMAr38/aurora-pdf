@@ -1,4 +1,4 @@
-"""Every key the interface uses has text in all three languages, with the same placeholders."""
+"""Every key the interface uses has text in every language, with the same placeholders."""
 import re
 
 import i18n_keys as keys
@@ -33,3 +33,21 @@ def test_placeholders_match_across_languages():
         want = set(PLACEHOLDER.findall(en))
         for lang, text in (("sr", sr), ("no", no)):
             assert set(PLACEHOLDER.findall(text)) == want, f"{key} [{lang}] placeholders differ from English"
+
+
+def test_every_other_language_has_every_key_and_the_same_placeholders():
+    from core import settings
+
+    rows = {r[0]: r[2] for r in keys.defined_rows()}
+    langs = keys.extra_langs()
+    assert len(langs) == 18
+    for code, (name, texts) in langs.items():
+        assert set(texts) == set(rows), f"{code}: missing {sorted(set(rows) - set(texts))[:5]}, extra {sorted(set(texts) - set(rows))[:5]}"
+        assert all(str(v).strip() for v in texts.values()), f"{code} has empty texts"
+        for key, en in rows.items():
+            assert set(PLACEHOLDER.findall(texts[key])) == set(PLACEHOLDER.findall(en)), f"{key} [{code}] placeholders differ from English"
+        assert "Marko Veselinović" in texts["aboutAuthor"], f"{code}: the author is named in About"
+    # index.html loads every file, and Windows detection only hands out languages the program has
+    html = (keys.WEB / "index.html").read_text(encoding="utf-8")
+    assert all(f'src="js/lang/{code}.js"' in html for code in langs)
+    assert set(settings.PRIMARY.values()) | {"pt-BR"} == set(langs) | {"sr", "no"}

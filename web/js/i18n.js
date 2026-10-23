@@ -1,5 +1,6 @@
 /* Aurora PDF - interface text in Serbian (Latin), English and Norwegian (Bokmål).
- * One row per key: [key, sr, en, no]. Placeholders like {name} are filled by A.t(). */
+ * One row per key: [key, sr, en, no]. Placeholders like {name} are filled by A.t().
+ * The other languages live in js/lang/<code>.js, one key -> text object each, added with A.addLang. */
 "use strict";
 window.Aurora = window.Aurora || {};
 (function (A) {
@@ -593,11 +594,15 @@ window.Aurora = window.Aurora || {};
   const I = (A.I18N = { sr: {}, en: {}, no: {} });
   ROWS.forEach(([k, sr, en, no]) => { I.sr[k] = sr; I.en[k] = en; I.no[k] = no; });
 
-  /* plural form of a counted word: stem + One / Few / Many */
+  /* the language picker lists these, in this order; each js/lang file appends itself */
+  A.LANGS = [["sr", "Srpski"], ["en", "English"], ["no", "Norsk"]];
+  A.addLang = (code, name, texts) => { I[code] = texts; A.LANGS.push([code, name]); };
+
+  /* plural form of a counted word: stem + One / Few / Many (Serbian, Russian and Ukrainian share the 1 / 2-4 / 5+ rule) */
   A.plural = (n, stem) => {
     const lang = (A.S && A.S.lang) || "sr";
     let form = n === 1 ? "One" : "Many";
-    if (lang === "sr") {
+    if (lang === "sr" || lang === "ru" || lang === "uk") {
       const d = n % 10, h = n % 100;
       form = d === 1 && h !== 11 ? "One" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? "Few" : "Many";
     } else if (n !== 1) form = "Few";

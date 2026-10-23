@@ -1303,9 +1303,12 @@ def test_print_renders_every_page_into_the_print_frame(ui):
 
 def test_languages_switch_everything(ui):
     ui.open("plain")
-    for lang, save in (("en", "Save"), ("no", "Lagre"), ("sr", "Sačuvaj")):
+    langs = ui.js("Aurora.LANGS.map(([code]) => code)")
+    assert len(langs) == 21 and langs[:3] == ["sr", "en", "no"]
+    for lang in langs:
         ui.js("Aurora.openPanel('settings')")
-        ui.page.click(f'#sLang [data-v="{lang}"]')
+        ui.page.select_option("#sLang", lang)
+        save = ui.js(f"Aurora.I18N['{lang}'].save")
         ui.page.wait_for_timeout(200)
         assert ui.page.inner_text("#saveBtn").strip() == save
         # nothing on screen is an untranslated key
@@ -1317,7 +1320,7 @@ def test_languages_switch_everything(ui):
 def test_about_names_the_author_the_licence_and_the_code(ui):
     """AGPL-3.0 asks the program to show its licence and where its code is; the author is named too."""
     ui.js("Aurora.openPanel('settings')")
-    ui.page.click('#sLang [data-v="en"]')
+    ui.page.select_option("#sLang", "en")
     assert ui.page.inner_text("#sAuthorLine") == "Created and vibe-coded by Marko Veselinović. © 2026 Marko Veselinović"
     assert "GNU AGPL-3.0" in ui.page.inner_text("#panelInner") and "no warranty" in ui.page.inner_text("#panelInner")
     repo = "https://github.com/KoMAr38/aurora-pdf"
