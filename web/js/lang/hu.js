@@ -540,5 +540,17 @@ Aurora.addLang("hu", "Magyar", {
   "licenseLnk": "Licenc",
   "thirdParty": "Harmadik féltől származó közlemények",
   "version": "Verzió",
-  "noDoc": "Előbb nyisson meg egy dokumentumot."
+  "noDoc": "Előbb nyisson meg egy dokumentumot.",
+  "feedback": "Hiba bejelentése vagy funkció javaslása",
+  "fbBug": "Hiba",
+  "fbIdea": "Javaslat",
+  "fbText": "Leírás",
+  "fbPhBug": "Mit csinált, és mi történt?",
+  "fbPhIdea": "Mit kellene tudnia a programnak?",
+  "fbHint": "Megnyitja a levelezőprogramját vagy a GitHubot ezzel a szöveggel, a program és a Windows verziójával. Semmi sem megy el, amíg Ön el nem küldi. Cím: {email}",
+  "fbMail": "Küldés e-mailben",
+  "fbGithub": "Megnyitás a GitHubon",
+  "fbEmpty": "Először írjon leírást.",
+  "e_UNDO_DAMAGED": "Ezt a visszavonási lépést nem sikerült beolvasni, ezért törölve lett. A dokumentum nem változott.",
+  "imagesSkipped": "Kihagyott képek, mert túl nagyok: {n}"
 });

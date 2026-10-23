@@ -311,6 +311,8 @@
     $("#searchNext").innerHTML = A.icon("chevD", 15);
     $("#printBtn").innerHTML = A.icon("print", 18);
     $("#menuBtn").innerHTML = A.icon("more", 18);
+    $("#feedbackBtn").innerHTML = A.icon("feedback", 18);
+    $("#feedbackBtn").onclick = () => A.feedback();
     $(".save-ico").innerHTML = A.icon("save", 16);
     $("#undoBtn").onclick = () => A.edit("undo", {});
     $("#redoBtn").onclick = () => A.edit("redo", {});
@@ -337,6 +339,7 @@
       "-",
       { label: A.t("settingsTitle"), icon: "settings", run: () => A.openPanel("settings") },
       { label: A.t("shortcuts"), icon: "keyboard", key: "?", run: A.showShortcuts },
+      { label: A.t("feedback"), icon: "feedback", run: () => A.feedback() },
     ];
   }
 
@@ -645,6 +648,7 @@
     S.recent = st.recent || [];
     S.ocrLangs = st.ocrLangs || {};
     S.version = st.version || "";
+    S.os = st.os || "";
     $("#app").classList.toggle("night", S.night);
     rebuildChrome();
     A.setMode("select");

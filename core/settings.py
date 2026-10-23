@@ -51,8 +51,10 @@ def lang_for(langid: int) -> str:
     """UI language for a Windows LANGID, English when the program does not have it."""
     if langid == 0x0416:
         return "pt-BR"
-    if langid in (0x0804, 0x1004):  # Chinese in China and Singapore; the traditional script gets English
+    if langid in (0x0804, 0x1004):  # Chinese in China and Singapore
         return "zh-CN"
+    if langid in (0x0404, 0x0C04, 0x1404):  # Taiwan, Hong Kong and Macau write the traditional script
+        return "zh-TW"
     return PRIMARY.get(langid & 0x3FF, "en")
 
 
@@ -66,6 +68,8 @@ def system_lang() -> str:
         return "pt-BR"
     if tag.startswith(("zh_CN", "zh_SG")):
         return "zh-CN"
+    if tag.startswith(("zh_TW", "zh_HK", "zh_MO")):
+        return "zh-TW"
     code = ALIASES.get(tag[:2].lower(), tag[:2].lower())
     return code if code in PRIMARY.values() else "en"
 

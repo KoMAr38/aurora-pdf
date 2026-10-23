@@ -540,5 +540,17 @@ Aurora.addLang("pt", "Português (Portugal)", {
   "licenseLnk": "Licença",
   "thirdParty": "Avisos de terceiros",
   "version": "Versão",
-  "noDoc": "Abra primeiro um documento."
+  "noDoc": "Abra primeiro um documento.",
+  "feedback": "Comunicar um problema ou sugerir uma funcionalidade",
+  "fbBug": "Problema",
+  "fbIdea": "Sugestão",
+  "fbText": "Descrição",
+  "fbPhBug": "O que fez e o que aconteceu?",
+  "fbPhIdea": "O que o programa deveria saber fazer?",
+  "fbHint": "Abre o seu programa de e-mail ou o GitHub com este texto e as versões do programa e do Windows. Nada é enviado até o enviar. Endereço: {email}",
+  "fbMail": "Enviar por e-mail",
+  "fbGithub": "Abrir no GitHub",
+  "fbEmpty": "Escreva primeiro uma descrição.",
+  "e_UNDO_DAMAGED": "Não foi possível ler esse passo de anulação, por isso foi removido. O documento não foi alterado.",
+  "imagesSkipped": "Imagens ignoradas por serem demasiado grandes: {n}"
 });

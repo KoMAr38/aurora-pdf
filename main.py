@@ -44,6 +44,7 @@ UNSAVED = {  # native fallback when the page cannot ask itself
     "hu": "Nem mentett módosítások vannak, vagy egy feladat még fut. Bezárja mégis?",
     "tr": "Kaydedilmemiş değişiklikler var veya bir görev hâlâ çalışıyor. Yine de kapatılsın mı?",
     "zh-CN": "有未保存的更改，或者仍有任务在运行。仍要关闭吗？",
+    "zh-TW": "有未儲存的變更，或仍有工作正在執行。仍要關閉嗎？",
     "ja": "未保存の変更があるか、タスクがまだ実行中です。閉じてもよろしいですか?",
 }
 

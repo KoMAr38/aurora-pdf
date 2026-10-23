@@ -156,6 +156,31 @@ def test_watermark_cannot_be_selected_or_copied(tmp_path):
     assert len(drawn_points(again[0])) > 200  # tiled: drawn several times
 
 
+def test_cjk_watermark_draws_real_glyphs_centered():
+    """Noto Sans has no Chinese or Japanese; the watermark then takes the built-in CJK font, whose glyphs have
+    curves (the missing-glyph box is four straight lines) and whose widths keep the text centered."""
+    doc = make_doc(1)
+    page = doc[0]
+    pt.watermark_text(doc, "机密 社外秘", rotate=0, fontsize=40)
+    kinds = {item[0] for d in page.get_drawings() for item in d["items"]}
+    assert "c" in kinds
+    pts = drawn_points(page)
+    box = pymupdf.Rect(pts[0], pts[0])
+    for q in pts:
+        box |= q
+    assert abs((box.x0 + box.x1) / 2 - page.rect.width / 2) < 10
+    assert "机密" not in page.get_text()
+
+
+def test_cjk_header_footer_is_written_in_a_font_that_has_it():
+    doc = make_doc(2)
+    pt.add_header_footer(doc, text="第 {n} 页，共 {total} 页", position="bc")
+    assert "第 2 页，共 2 页" in doc[1].get_text()
+    assert any(f[3].startswith("Droid Sans Fallback") for f in doc[1].get_fonts())
+    pt.add_header_footer(doc, text="Side {n}", position="tc")  # Latin text keeps Noto Sans
+    assert any("Noto" in f[3] for f in doc[0].get_fonts())
+
+
 @pytest.mark.parametrize("rot", ROTATIONS)
 def test_header_footer_positions(rot):
     doc = make_doc(3, rotation=rot)

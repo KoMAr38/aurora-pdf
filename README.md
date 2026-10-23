@@ -23,11 +23,11 @@ Programmet har 465 automatiske tester. 71 av dem styrer det ekte grensesnittet m
 | Vannmerke | Tekst eller bilde, med vinkel og gjennomsiktighet, én gang eller gjentatt over hele siden. Topptekst og bunntekst med sidenummer, dato og filnavn |
 | Sladde | Områder eller søketreff. Tekst, bildepunkter, kommentarer, skjemafelt og lenker under området blir fjernet fra filen, også teksten en tagget fil gir til kopiering og skjermlesere |
 | Sider | Ny rekkefølge ved å dra, rotere, duplisere, trekke ut, slette, sette inn tom side, en annen PDF eller bilder, dele opp og beskjære |
-| OCR | Gjør skannede sider søkbare på norsk, engelsk og serbisk (latinsk og kyrillisk) |
+| OCR | Gjør skannede sider søkbare på 23 språk, blant dem norsk, engelsk, serbisk (latinsk og kyrillisk), tysk, russisk, japansk og kinesisk |
 | Eksport | Word (.docx), ren tekst, sider som PNG eller JPG, og bildene som ligger i filen |
-| Annet | Slå sammen filer, dokumentinfo, komprimere store bilder, åpne bilder som PDF |
+| Annet | Slå sammen filer, dokumentinfo, komprimere store bilder, åpne bilder som PDF. Knappen øverst til høyre åpner en e-post eller en sak på GitHub for å melde fra om en feil eller foreslå noe nytt, med versjonen av programmet og Windows. Programmet sender ingenting selv |
 
-Grensesnittet finnes på 22 språk: norsk, engelsk, serbisk, svensk, dansk, finsk, tysk, fransk, italiensk, spansk, portugisisk (Portugal og Brasil), gresk, russisk, ukrainsk, bulgarsk, makedonsk, ungarsk, rumensk, tyrkisk, japansk og kinesisk (forenklet). Første gang velger programmet språket til Windows. Temaet er lyst eller mørkt. Står temaet på automatisk, følger det innstillingen for apper i Windows.
+Grensesnittet finnes på 23 språk: norsk, engelsk, serbisk, svensk, dansk, finsk, tysk, fransk, italiensk, spansk, portugisisk (Portugal og Brasil), gresk, russisk, ukrainsk, bulgarsk, makedonsk, ungarsk, rumensk, tyrkisk, japansk og kinesisk (forenklet og tradisjonell). Fildialogene og navnene programmet foreslår for nye filer, følger språket. Vannmerker og topptekster på kinesisk, japansk og koreansk skrives med skriften Droid Sans Fallback som følger med MuPDF. Første gang velger programmet språket til Windows. Temaet er lyst eller mørkt. Står temaet på automatisk, følger det innstillingen for apper i Windows.
 
 ![Skjema fylt ut og signert med sertifikat, i lyst tema](docs/bilder/signatur.png)
 
@@ -77,17 +77,17 @@ Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 
 **Ett stilark for begge temaene.** Alle fargene ligger i variabler. Det mørke temaet er standardverdiene, og det lyse overstyrer dem i én blokk. Tittellinjen i Windows får de samme fargene, og vinduet starter i riktig farge, så det ikke blinker mørkt før et lyst tema er lastet.
 
-**Oversettelsene er testet.** De 541 tekstene i grensesnittet ligger i én tabell med norsk, engelsk og serbisk, og de 19 andre språkene har hver sin fil i web/js/lang. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler på et språk, ikke brukes, eller har andre plassholdere enn den engelske.
+**Oversettelsene er testet.** De 553 tekstene i grensesnittet ligger i én tabell med norsk, engelsk og serbisk, og de 20 andre språkene har hver sin fil i web/js/lang. Den tradisjonelle kinesiske er laget fra den forenklede med OpenCC (s2twp) og rettet for hånd. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler på et språk, ikke brukes, eller har andre plassholdere enn den engelske.
 
 ### Testing
 
 | Fil | Tester | Dekker |
 |---|---:|---|
-| `tests/test_engine.py` | 288 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding og at tekst utenfor området står der den sto, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
-| `tests/test_api.py` | 79 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_engine.py` | 295 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding og at tekst utenfor området står der den sto, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
+| `tests/test_api.py` | 105 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 23 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
-| `tests/test_i18n.py` | 5 | Oversettelsene på alle 22 språk |
-| `tests/e2e/test_ui.py` | 71 | Grensesnittet, styrt med mus og tastatur |
+| `tests/test_i18n.py` | 5 | Oversettelsene på alle 23 språk, også fildialogene og filnavnene |
+| `tests/e2e/test_ui.py` | 78 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
 

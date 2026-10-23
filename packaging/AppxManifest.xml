@@ -12,7 +12,7 @@
   IgnorableNamespaces="uap uap3 desktop rescap">
 
   <Identity Name="Klarbro.AuroraPDF" Publisher="CN=ABCD4F51-5874-4743-8D74-A26747A39107"
-            Version="2.0.0.0" ProcessorArchitecture="x64"/>
+            Version="2.0.1.0" ProcessorArchitecture="x64"/>
 
   <Properties>
     <DisplayName>Aurora PDF</DisplayName>
@@ -28,6 +28,26 @@
     <Resource Language="en-us"/>
     <Resource Language="nb-no"/>
     <Resource Language="sr-latn-rs"/>
+    <Resource Language="sv-se"/>
+    <Resource Language="da-dk"/>
+    <Resource Language="fi-fi"/>
+    <Resource Language="de-de"/>
+    <Resource Language="fr-fr"/>
+    <Resource Language="it-it"/>
+    <Resource Language="es-es"/>
+    <Resource Language="pt-pt"/>
+    <Resource Language="pt-br"/>
+    <Resource Language="el-gr"/>
+    <Resource Language="ru-ru"/>
+    <Resource Language="uk-ua"/>
+    <Resource Language="bg-bg"/>
+    <Resource Language="mk-mk"/>
+    <Resource Language="hu-hu"/>
+    <Resource Language="ro-ro"/>
+    <Resource Language="tr-tr"/>
+    <Resource Language="ja-jp"/>
+    <Resource Language="zh-cn"/>
+    <Resource Language="zh-tw"/>
   </Resources>
 
   <Applications>

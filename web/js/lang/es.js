@@ -540,5 +540,17 @@ Aurora.addLang("es", "Español", {
   "licenseLnk": "Licencia",
   "thirdParty": "Avisos de terceros",
   "version": "Versión",
-  "noDoc": "Abre primero un documento."
+  "noDoc": "Abre primero un documento.",
+  "feedback": "Informar de un problema o sugerir una función",
+  "fbBug": "Problema",
+  "fbIdea": "Sugerencia",
+  "fbText": "Descripción",
+  "fbPhBug": "¿Qué hiciste y qué pasó?",
+  "fbPhIdea": "¿Qué debería poder hacer el programa?",
+  "fbHint": "Abre tu programa de correo o GitHub con este texto y las versiones del programa y de Windows. No se envía nada hasta que lo envíes tú. Dirección: {email}",
+  "fbMail": "Enviar por correo",
+  "fbGithub": "Abrir en GitHub",
+  "fbEmpty": "Escribe primero una descripción.",
+  "e_UNDO_DAMAGED": "No se pudo leer ese paso de deshacer, así que se ha eliminado. El documento no ha cambiado.",
+  "imagesSkipped": "Imágenes omitidas por ser demasiado grandes: {n}"
 });

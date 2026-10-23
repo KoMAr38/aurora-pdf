@@ -540,5 +540,17 @@ Aurora.addLang("sv", "Svenska", {
   "licenseLnk": "Licens",
   "thirdParty": "Tredjepartsmeddelanden",
   "version": "Version",
-  "noDoc": "Öppna ett dokument först."
+  "noDoc": "Öppna ett dokument först.",
+  "feedback": "Rapportera ett problem eller föreslå en funktion",
+  "fbBug": "Problem",
+  "fbIdea": "Förslag",
+  "fbText": "Beskrivning",
+  "fbPhBug": "Vad gjorde du, och vad hände?",
+  "fbPhIdea": "Vad borde programmet kunna göra?",
+  "fbHint": "Öppnar ditt e-postprogram eller GitHub med den här texten och versionerna av programmet och Windows. Inget skickas förrän du skickar det själv. Adress: {email}",
+  "fbMail": "Skicka med e-post",
+  "fbGithub": "Öppna på GitHub",
+  "fbEmpty": "Skriv en beskrivning först.",
+  "e_UNDO_DAMAGED": "Ångra-steget kunde inte läsas och togs därför bort. Dokumentet är oförändrat.",
+  "imagesSkipped": "Bilder som hoppades över för att de är för stora: {n}"
 });

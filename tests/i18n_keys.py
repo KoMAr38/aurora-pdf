@@ -22,7 +22,7 @@ DYNAMIC = {
     "e_": ["NOT_FOUND", "INVALID", "FILE_NOT_FOUND", "FILE_LOCKED", "ERROR", "BAD_PAGES", "NEED_PASSWORD", "WRONG_PASSWORD", "NOT_ALLOWED", "NEED_PATH", "CANNOT_DELETE_ALL", "BAD_KIND",
            "NOTHING_FOUND", "BUSY", "NOTHING_TO_OCR", "NEED_TWO", "NO_DOC", "NEED_PASSWORDS", "SAVE_AS_COPY",
            "NOT_SUPPORTED", "EMPTY_SIGNATURE", "OPEN_FILE", "SOURCE_PROTECTED", "SAVE_FIRST", "FILE_CHANGED",
-           "REDACT_LEFT", "REDACT_MOVED", "NETWORK"],
+           "REDACT_LEFT", "REDACT_MOVED", "UNDO_DAMAGED", "NETWORK"],
     # op_ + undo labels (Session.edit labels in api.py; annotation kinds)
     "op_": ["rotate", "delete", "reorder", "insert", "duplicate", "crop", "watermark", "header", "metadata", "ink",
             "rect", "ellipse", "line", "arrow", "highlight", "underline", "strikeout", "text", "note",

@@ -540,5 +540,17 @@ Aurora.addLang("tr", "Türkçe", {
   "licenseLnk": "Lisans",
   "thirdParty": "Üçüncü taraf bildirimleri",
   "version": "Sürüm",
-  "noDoc": "Önce bir belge açın."
+  "noDoc": "Önce bir belge açın.",
+  "feedback": "Sorun bildirin veya özellik önerin",
+  "fbBug": "Sorun",
+  "fbIdea": "Öneri",
+  "fbText": "Açıklama",
+  "fbPhBug": "Ne yaptınız ve ne oldu?",
+  "fbPhIdea": "Program neleri yapabilmeli?",
+  "fbHint": "E-posta programınızı veya GitHub'ı bu metin ile programın ve Windows'un sürümleriyle açar. Siz göndermedikçe hiçbir şey gönderilmez. Adres: {email}",
+  "fbMail": "E-postayla gönder",
+  "fbGithub": "GitHub'da aç",
+  "fbEmpty": "Önce bir açıklama yazın.",
+  "e_UNDO_DAMAGED": "Bu geri alma adımı okunamadığı için kaldırıldı. Belge değişmedi.",
+  "imagesSkipped": "Çok büyük oldukları için atlanan resimler: {n}"
 });

@@ -540,5 +540,17 @@ Aurora.addLang("it", "Italiano", {
   "licenseLnk": "Licenza",
   "thirdParty": "Note di terze parti",
   "version": "Versione",
-  "noDoc": "Prima apri un documento."
+  "noDoc": "Prima apri un documento.",
+  "feedback": "Segnala un problema o suggerisci una funzione",
+  "fbBug": "Problema",
+  "fbIdea": "Suggerimento",
+  "fbText": "Descrizione",
+  "fbPhBug": "Cosa hai fatto e cosa è successo?",
+  "fbPhIdea": "Cosa dovrebbe saper fare il programma?",
+  "fbHint": "Apre il tuo programma di posta o GitHub con questo testo e le versioni del programma e di Windows. Non viene inviato nulla finché non lo invii tu. Indirizzo: {email}",
+  "fbMail": "Invia per e-mail",
+  "fbGithub": "Apri su GitHub",
+  "fbEmpty": "Scrivi prima una descrizione.",
+  "e_UNDO_DAMAGED": "Non è stato possibile leggere questo passaggio di annullamento, quindi è stato rimosso. Il documento non è cambiato.",
+  "imagesSkipped": "Immagini saltate perché troppo grandi: {n}"
 });

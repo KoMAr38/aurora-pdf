@@ -589,6 +589,18 @@ window.Aurora = window.Aurora || {};
     ["thirdParty", "Ostale licence", "Third-party notices", "Andre lisenser"],
     ["version", "Verzija", "Version", "Versjon"],
     ["noDoc", "Prvo otvori dokument.", "Open a document first.", "Åpne et dokument først."],
+    ["feedback", "Prijavi problem ili predloži novu funkciju", "Report a problem or suggest a feature", "Meld fra om en feil eller foreslå noe nytt"],
+    ["fbBug", "Problem", "Problem", "Feil"],
+    ["fbIdea", "Predlog", "Idea", "Forslag"],
+    ["fbText", "Opis", "Description", "Beskrivelse"],
+    ["fbPhBug", "Šta si radio i šta se desilo?", "What did you do, and what happened?", "Hva gjorde du, og hva skjedde?"],
+    ["fbPhIdea", "Šta bi program trebalo da ume?", "What should the program be able to do?", "Hva burde programmet kunne gjøre?"],
+    ["fbHint", "Otvara se tvoj program za e-poštu ili GitHub sa ovim tekstom i verzijom programa i Windowsa. Ništa se ne šalje dok sam ne pošalješ. Adresa: {email}", "Opens your e-mail program or GitHub with this text and the program and Windows versions. Nothing is sent until you send it. Address: {email}", "Åpner e-postprogrammet ditt eller GitHub med denne teksten og versjonen av programmet og Windows. Ingenting sendes før du sender det selv. Adresse: {email}"],
+    ["fbMail", "Pošalji e-poštom", "Send by e-mail", "Send på e-post"],
+    ["fbGithub", "Otvori na GitHubu", "Open on GitHub", "Åpne på GitHub"],
+    ["fbEmpty", "Prvo napiši opis.", "Write a description first.", "Skriv en beskrivelse først."],
+    ["e_UNDO_DAMAGED", "Korak za poništavanje nije mogao da se pročita, pa je izbačen. Dokument je ostao kakav je bio.", "That undo step could not be read, so it was dropped. The document is unchanged.", "Angresteget kunne ikke leses, så det ble fjernet. Dokumentet er uendret."],
+    ["imagesSkipped", "Preskočene slike jer su prevelike: {n}", "Images skipped because they are too big: {n}", "Bilder hoppet over fordi de er for store: {n}"],
   ];
 
   const I = (A.I18N = { sr: {}, en: {}, no: {} });

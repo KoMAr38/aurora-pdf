@@ -540,5 +540,17 @@ Aurora.addLang("de", "Deutsch", {
   "licenseLnk": "Lizenz",
   "thirdParty": "Hinweise zu Drittanbietern",
   "version": "Version",
-  "noDoc": "Öffnen Sie zuerst ein Dokument."
+  "noDoc": "Öffnen Sie zuerst ein Dokument.",
+  "feedback": "Problem melden oder Funktion vorschlagen",
+  "fbBug": "Problem",
+  "fbIdea": "Vorschlag",
+  "fbText": "Beschreibung",
+  "fbPhBug": "Was haben Sie getan, und was ist passiert?",
+  "fbPhIdea": "Was sollte das Programm können?",
+  "fbHint": "Öffnet Ihr E-Mail-Programm oder GitHub mit diesem Text und den Versionen von Programm und Windows. Gesendet wird erst, wenn Sie selbst senden. Adresse: {email}",
+  "fbMail": "Per E-Mail senden",
+  "fbGithub": "Auf GitHub öffnen",
+  "fbEmpty": "Bitte zuerst eine Beschreibung eingeben.",
+  "e_UNDO_DAMAGED": "Dieser Rückgängig-Schritt konnte nicht gelesen werden und wurde entfernt. Das Dokument ist unverändert.",
+  "imagesSkipped": "Übersprungene Bilder, weil sie zu groß sind: {n}"
 });

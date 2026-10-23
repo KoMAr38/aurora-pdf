@@ -1116,11 +1116,11 @@ def test_settings_changed_from_two_threads_keep_both_changes(tmp_path, monkeypat
                                           (0x041A, "sr"), (0x141A, "sr"), (0x0409, "en"), (0x0407, "de"),
                                           (0x0C07, "de"), (0x0416, "pt-BR"), (0x0816, "pt"), (0x0411, "ja"),
                                           (0x0422, "uk"), (0x042F, "mk"), (0x0412, "en"),
-                                          (0x0804, "zh-CN"), (0x0404, "en")])
+                                          (0x0804, "zh-CN"), (0x0404, "zh-TW"), (0x0C04, "zh-TW")])
 def test_a_first_start_speaks_the_language_of_windows(langid, lang):
     """Norwegian, Serbian/Croatian/Bosnian, German (also Austrian), both Portuguese, Japanese, Ukrainian,
-    Macedonian and simplified Chinese Windows get their own language; Korean and traditional Chinese, which the
-    program does not have, get English."""
+    Macedonian, simplified and traditional Chinese Windows get their own language; Korean, which the program
+    does not have, gets English."""
     from core import settings
 
     assert settings.lang_for(langid) == lang
@@ -1128,7 +1128,7 @@ def test_a_first_start_speaks_the_language_of_windows(langid, lang):
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows asks the system, not LANG")
 @pytest.mark.parametrize("tag, lang", [("nb_NO.UTF-8", "no"), ("sr_RS@latin", "sr"), ("de_DE.UTF-8", "de"), ("pt_BR.UTF-8", "pt-BR"),
-                                       ("pt_PT.UTF-8", "pt"), ("zh_CN.UTF-8", "zh-CN"), ("zh_TW.UTF-8", "en"),
+                                       ("pt_PT.UTF-8", "pt"), ("zh_CN.UTF-8", "zh-CN"), ("zh_TW.UTF-8", "zh-TW"),
                                        ("ko_KR.UTF-8", "en"), ("", "en")])
 def test_elsewhere_the_first_language_comes_from_lang(tag, lang, monkeypatch):
     from core import settings
@@ -1347,21 +1347,36 @@ def test_an_ocr_holds_its_slot_from_the_start(api, tmp_path, monkeypatch):
     assert api.s.job is None and ok(call(api, "rotate", pages=[0]))
 
 
-def test_an_undo_step_that_cannot_be_read_keeps_the_history(api, tmp_path, monkeypatch):
-    """A damaged step on disk (InvalidTag, OSError) fails the undo, and leaves undo and redo as they were;
-    an edit that cannot roll back keeps its half-done change, unsaved."""
+def test_an_undo_step_that_cannot_be_read_is_dropped_and_says_so(api, tmp_path, monkeypatch):
+    """A damaged step on disk (InvalidTag, OSError) fails that undo with UNDO_DAMAGED and is dropped, so the
+    steps below it still work; the document and redo stay as they were. An edit that cannot roll back keeps
+    its half-done change, unsaved."""
     from core import session as sess
 
     res, _ = opened(api, tmp_path)
     ok(call(api, "rotate", pages=[0], degrees=90))
+    ok(call(api, "rotate", pages=[0], degrees=90))
     revs = list(api.s.revs)
+    real_data = sess.Snapshot.data
+    top = api.s.undo_stack[-1]
 
     def damaged(self):
-        raise OSError("undo step damaged")
+        if self is top:
+            raise OSError("undo step damaged")
+        return real_data.fget(self)
 
     monkeypatch.setattr(sess.Snapshot, "data", property(damaged))
-    assert not call(api, "undo")["ok"]
+    assert call(api, "undo")["error"] == "UNDO_DAMAGED"
     assert len(api.s.undo_stack) == 1 and not api.s.redo_stack and api.s.revs == revs
+    ok(call(api, "undo"))  # the step below the damaged one: back to the opened file
+    assert api.s.doc[0].rotation == 0
+    ok(call(api, "rotate", pages=[0], degrees=90))
+    revs = list(api.s.revs)
+
+    def unreadable(self):
+        raise OSError("undo step damaged")
+
+    monkeypatch.setattr(sess.Snapshot, "data", property(unreadable))
     real = pt.rotate_pages
 
     def half(doc, pages, degrees):
@@ -1478,4 +1493,4 @@ def test_a_giant_page_and_a_huge_image_stay_within_bounds(api, tmp_path, monkeyp
     emb.mkdir()
     answers(api, str(emb))
     st = wait_job(api, ok(call(api, "export_start", kind="embedded", pages="1"))["job"])
-    assert st["state"] == "done" and st["result"]["count"] == 0
+    assert st["state"] == "done" and st["result"]["count"] == 0 and st["result"]["skipped"] == 1

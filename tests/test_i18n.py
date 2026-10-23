@@ -40,7 +40,7 @@ def test_every_other_language_has_every_key_and_the_same_placeholders():
 
     rows = {r[0]: r[2] for r in keys.defined_rows()}
     langs = keys.extra_langs()
-    assert len(langs) == 19
+    assert len(langs) == 20
     for code, (name, texts) in langs.items():
         assert set(texts) == set(rows), f"{code}: missing {sorted(set(rows) - set(texts))[:5]}, extra {sorted(set(texts) - set(rows))[:5]}"
         assert all(str(v).strip() for v in texts.values()), f"{code} has empty texts"
@@ -50,4 +50,7 @@ def test_every_other_language_has_every_key_and_the_same_placeholders():
     # index.html loads every file, and Windows detection only hands out languages the program has
     html = (keys.WEB / "index.html").read_text(encoding="utf-8")
     assert all(f'src="js/lang/{code}.js"' in html for code in langs)
-    assert set(settings.PRIMARY.values()) | {"pt-BR", "zh-CN"} == set(langs) | {"sr", "no"}
+    assert set(settings.PRIMARY.values()) | {"pt-BR", "zh-CN", "zh-TW"} == set(langs) | {"sr", "no"}
+    # file dialogs and the names the program suggests speak every language too
+    import api
+    assert set(api.FILTER_NAMES) == set(api.SUFFIX) == set(langs) | {"sr", "en", "no"}

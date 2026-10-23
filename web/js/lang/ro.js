@@ -540,5 +540,17 @@ Aurora.addLang("ro", "Română", {
   "licenseLnk": "Licență",
   "thirdParty": "Notificări privind componentele terțe",
   "version": "Versiune",
-  "noDoc": "Deschideți mai întâi un document."
+  "noDoc": "Deschideți mai întâi un document.",
+  "feedback": "Raportați o problemă sau sugerați o funcție",
+  "fbBug": "Problemă",
+  "fbIdea": "Sugestie",
+  "fbText": "Descriere",
+  "fbPhBug": "Ce ați făcut și ce s-a întâmplat?",
+  "fbPhIdea": "Ce ar trebui să poată face programul?",
+  "fbHint": "Deschide programul dvs. de e-mail sau GitHub cu acest text și versiunile programului și ale Windows. Nimic nu se trimite până nu trimiteți dvs. Adresă: {email}",
+  "fbMail": "Trimiteți prin e-mail",
+  "fbGithub": "Deschideți pe GitHub",
+  "fbEmpty": "Scrieți mai întâi o descriere.",
+  "e_UNDO_DAMAGED": "Acest pas de anulare nu a putut fi citit, așa că a fost eliminat. Documentul nu s-a schimbat.",
+  "imagesSkipped": "Imagini omise pentru că sunt prea mari: {n}"
 });

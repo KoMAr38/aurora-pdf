@@ -1304,7 +1304,7 @@ def test_print_renders_every_page_into_the_print_frame(ui):
 def test_languages_switch_everything(ui):
     ui.open("plain")
     langs = ui.js("Aurora.LANGS.map(([code]) => code)")
-    assert len(langs) == 22 and langs[:3] == ["sr", "en", "no"]
+    assert len(langs) == 23 and langs[:3] == ["sr", "en", "no"]
     for lang in langs:
         ui.js("Aurora.openPanel('settings')")
         ui.page.select_option("#sLang", lang)
@@ -1331,6 +1331,38 @@ def test_about_names_the_author_the_licence_and_the_code(ui):
         Aurora.call = (m, p, o) => m === 'open_url' ? (Aurora.opened.push(p.url), Promise.resolve({ ok: true })) : call(m, p, o); }""")
     ui.page.click('#panelInner [data-url$="LICENSE"]')
     assert ui.js("Aurora.opened") == [repo + "/blob/main/LICENSE"]
+
+
+def test_feedback_opens_a_mail_or_an_issue_with_the_versions_and_sends_nothing(ui):
+    """The button in the top bar opens the dialog; an empty text is refused; the mail and the GitHub issue carry
+    the text, the program and Windows versions and the language. The program itself sends nothing."""
+    ui.js("Aurora.setLang('en')")
+    ui.js("""() => { const call = Aurora.call; Aurora.opened = [];
+        Aurora.call = (m, p, o) => m === 'open_url' ? (Aurora.opened.push(p.url), Promise.resolve({ ok: true })) : call(m, p, o); }""")
+    from urllib.parse import parse_qs, urlsplit
+
+    version = ui.js("Aurora.S.version")
+    for button, kind in (("Send by e-mail", "bug"), ("Open on GitHub", "idea")):
+        ui.page.click("#feedbackBtn")
+        ui.page.select_option("#fbKind", kind)
+        assert ui.page.get_attribute("#fbText", "placeholder") == ui.js(f"Aurora.t('{'fbPhBug' if kind == 'bug' else 'fbPhIdea'}')")
+        ui.page.click(f".m-foot >> text={button}")
+        assert ui.js("Aurora.opened") == [] and ui.page.is_visible("#fbText")  # nothing written yet
+        ui.page.fill("#fbText", "Ctrl+P prints the wrong page\nsecond line")
+        ui.page.click(f".m-foot >> text={button}")
+        ui.page.wait_for_function("Aurora.opened.length > 0")
+        url = ui.js("Aurora.opened.pop()")
+        ui.page.wait_for_selector("#fbKind", state="detached")  # the closed dialog fades out first
+        parts = urlsplit(url)
+        q = {k: v[0] for k, v in parse_qs(parts.query).items()}
+        if kind == "bug":
+            assert url.startswith("mailto:veselim35@gmail.com?")
+            assert q["subject"] == "Aurora PDF Bug: Ctrl+P prints the wrong page"
+        else:
+            assert url.startswith("https://github.com/KoMAr38/aurora-pdf/issues/new?")
+            assert q["title"] == "[Idea] Ctrl+P prints the wrong page"
+        assert q["body"].startswith("Ctrl+P prints the wrong page\nsecond line\n\n---\nAurora PDF " + version + " · ")
+        assert q["body"].endswith(" · en") and version
 
 
 def test_read_aloud_uses_only_voices_on_this_computer(ui):

@@ -540,5 +540,17 @@ Aurora.addLang("pt-BR", "Português (Brasil)", {
   "licenseLnk": "Licença",
   "thirdParty": "Avisos de terceiros",
   "version": "Versão",
-  "noDoc": "Abra um documento primeiro."
+  "noDoc": "Abra um documento primeiro.",
+  "feedback": "Relatar um problema ou sugerir um recurso",
+  "fbBug": "Problema",
+  "fbIdea": "Sugestão",
+  "fbText": "Descrição",
+  "fbPhBug": "O que você fez e o que aconteceu?",
+  "fbPhIdea": "O que o programa deveria fazer?",
+  "fbHint": "Abre seu programa de e-mail ou o GitHub com este texto e as versões do programa e do Windows. Nada é enviado até que você envie. Endereço: {email}",
+  "fbMail": "Enviar por e-mail",
+  "fbGithub": "Abrir no GitHub",
+  "fbEmpty": "Escreva uma descrição primeiro.",
+  "e_UNDO_DAMAGED": "Não foi possível ler essa etapa de desfazer, então ela foi removida. O documento não mudou.",
+  "imagesSkipped": "Imagens ignoradas por serem grandes demais: {n}"
 });

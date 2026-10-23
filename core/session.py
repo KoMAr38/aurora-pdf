@@ -349,7 +349,12 @@ class Session:
             if not src:
                 return False
             snap = src[-1]
-            doc = pymupdf.open("pdf", snap.data)  # a damaged step fails here, before the history changes
+            try:
+                doc = pymupdf.open("pdf", snap.data)  # a damaged step fails here, before the document changes
+            except Exception:
+                logging.getLogger("aurora").warning("undo step %r cannot be read: dropped", snap.label, exc_info=True)
+                src.pop().close()  # else it blocks every step below it; the document stays as it is
+                raise SessionError("UNDO_DAMAGED") from None
             dst.append(self._snapshot(snap.label))
             src.pop()
             self._restore(snap, doc)

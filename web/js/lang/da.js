@@ -540,5 +540,17 @@ Aurora.addLang("da", "Dansk", {
   "licenseLnk": "Licens",
   "thirdParty": "Meddelelser fra tredjepart",
   "version": "Version",
-  "noDoc": "Åbn et dokument først."
+  "noDoc": "Åbn et dokument først.",
+  "feedback": "Rapportér et problem eller foreslå en funktion",
+  "fbBug": "Problem",
+  "fbIdea": "Forslag",
+  "fbText": "Beskrivelse",
+  "fbPhBug": "Hvad gjorde du, og hvad skete der?",
+  "fbPhIdea": "Hvad burde programmet kunne?",
+  "fbHint": "Åbner dit mailprogram eller GitHub med denne tekst og versionerne af programmet og Windows. Intet sendes, før du selv sender det. Adresse: {email}",
+  "fbMail": "Send som e-mail",
+  "fbGithub": "Åbn på GitHub",
+  "fbEmpty": "Skriv først en beskrivelse.",
+  "e_UNDO_DAMAGED": "Fortryd-trinnet kunne ikke læses, så det blev fjernet. Dokumentet er uændret.",
+  "imagesSkipped": "Billeder sprunget over, fordi de er for store: {n}"
 });

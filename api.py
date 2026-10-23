@@ -13,6 +13,7 @@ import base64
 import io
 import logging
 import os
+import platform
 import re
 import sys
 import webbrowser
@@ -39,6 +40,26 @@ FILTER_NAMES = {
     "sr": {"pdf": "PDF", "images": "Slike", "all": "Svi fajlovi", "text": "Tekst", "id": "Digitalni ID"},
     "en": {"pdf": "PDF", "images": "Images", "all": "All files", "text": "Text", "id": "Digital ID"},
     "no": {"pdf": "PDF", "images": "Bilder", "all": "Alle filer", "text": "Tekst", "id": "Digital ID"},
+    "de": {"pdf": "PDF", "images": "Bilder", "all": "Alle Dateien", "text": "Text", "id": "Digitale ID"},
+    "fr": {"pdf": "PDF", "images": "Images", "all": "Tous les fichiers", "text": "Texte", "id": "ID numérique"},
+    "it": {"pdf": "PDF", "images": "Immagini", "all": "Tutti i file", "text": "Testo", "id": "ID digitale"},
+    "es": {"pdf": "PDF", "images": "Imágenes", "all": "Todos los archivos", "text": "Texto", "id": "ID digital"},
+    "pt": {"pdf": "PDF", "images": "Imagens", "all": "Todos os ficheiros", "text": "Texto", "id": "ID digital"},
+    "pt-BR": {"pdf": "PDF", "images": "Imagens", "all": "Todos os arquivos", "text": "Texto", "id": "ID digital"},
+    "sv": {"pdf": "PDF", "images": "Bilder", "all": "Alla filer", "text": "Text", "id": "Digitalt ID"},
+    "da": {"pdf": "PDF", "images": "Billeder", "all": "Alle filer", "text": "Tekst", "id": "Digitalt id"},
+    "fi": {"pdf": "PDF", "images": "Kuvat", "all": "Kaikki tiedostot", "text": "Teksti", "id": "Digitaalinen tunnus"},
+    "el": {"pdf": "PDF", "images": "Εικόνες", "all": "Όλα τα αρχεία", "text": "Κείμενο", "id": "Ψηφιακό αναγνωριστικό"},
+    "ru": {"pdf": "PDF", "images": "Изображения", "all": "Все файлы", "text": "Текст", "id": "Цифровое удостоверение"},
+    "uk": {"pdf": "PDF", "images": "Зображення", "all": "Усі файли", "text": "Текст", "id": "Цифровий ідентифікатор"},
+    "bg": {"pdf": "PDF", "images": "Изображения", "all": "Всички файлове", "text": "Текст", "id": "Цифров идентификатор"},
+    "mk": {"pdf": "PDF", "images": "Слики", "all": "Сите датотеки", "text": "Текст", "id": "Дигитален ИД"},
+    "hu": {"pdf": "PDF", "images": "Képek", "all": "Minden fájl", "text": "Szöveg", "id": "Digitális azonosító"},
+    "ro": {"pdf": "PDF", "images": "Imagini", "all": "Toate fișierele", "text": "Text", "id": "ID digital"},
+    "tr": {"pdf": "PDF", "images": "Resimler", "all": "Tüm dosyalar", "text": "Metin", "id": "Dijital Kimlik"},
+    "ja": {"pdf": "PDF", "images": "画像", "all": "すべてのファイル", "text": "テキスト", "id": "デジタル ID"},
+    "zh-CN": {"pdf": "PDF", "images": "图像", "all": "所有文件", "text": "文本", "id": "数字 ID"},
+    "zh-TW": {"pdf": "PDF", "images": "影像", "all": "所有檔案", "text": "文字", "id": "數位 ID"},
 }
 
 SUFFIX = {
@@ -48,6 +69,26 @@ SUFFIX = {
            "pages": "_pages", "signed": "_signed", "merged": "merged", "images": "images"},
     "no": {"copy": "_kopi", "protected": "_beskyttet", "unprotected": "_ulast", "small": "_komprimert",
            "pages": "_sider", "signed": "_signert", "merged": "sammenslatt", "images": "bilder"},
+    "de": {"copy": "_Kopie", "protected": "_geschützt", "unprotected": "_entsperrt", "small": "_komprimiert", "pages": "_Seiten", "signed": "_signiert", "merged": "zusammengeführt", "images": "Bilder"},
+    "fr": {"copy": "_copie", "protected": "_protégé", "unprotected": "_déverrouillé", "small": "_compressé", "pages": "_pages", "signed": "_signé", "merged": "fusionné", "images": "images"},
+    "it": {"copy": "_copia", "protected": "_protetto", "unprotected": "_sbloccato", "small": "_compresso", "pages": "_pagine", "signed": "_firmato", "merged": "unito", "images": "immagini"},
+    "es": {"copy": "_copia", "protected": "_protegido", "unprotected": "_desbloqueado", "small": "_comprimido", "pages": "_páginas", "signed": "_firmado", "merged": "combinado", "images": "imágenes"},
+    "pt": {"copy": "_cópia", "protected": "_protegido", "unprotected": "_desbloqueado", "small": "_comprimido", "pages": "_páginas", "signed": "_assinado", "merged": "combinado", "images": "imagens"},
+    "pt-BR": {"copy": "_cópia", "protected": "_protegido", "unprotected": "_desbloqueado", "small": "_comprimido", "pages": "_páginas", "signed": "_assinado", "merged": "combinado", "images": "imagens"},
+    "sv": {"copy": "_kopia", "protected": "_skyddad", "unprotected": "_upplåst", "small": "_komprimerad", "pages": "_sidor", "signed": "_signerad", "merged": "sammanslagen", "images": "bilder"},
+    "da": {"copy": "_kopi", "protected": "_beskyttet", "unprotected": "_låst_op", "small": "_komprimeret", "pages": "_sider", "signed": "_signeret", "merged": "samlet", "images": "billeder"},
+    "fi": {"copy": "_kopio", "protected": "_suojattu", "unprotected": "_avattu", "small": "_pakattu", "pages": "_sivut", "signed": "_allekirjoitettu", "merged": "yhdistetty", "images": "kuvat"},
+    "el": {"copy": "_αντίγραφο", "protected": "_προστατευμένο", "unprotected": "_ξεκλείδωτο", "small": "_συμπιεσμένο", "pages": "_σελίδες", "signed": "_υπογεγραμμένο", "merged": "συγχωνευμένο", "images": "εικόνες"},
+    "ru": {"copy": "_копия", "protected": "_защищен", "unprotected": "_разблокирован", "small": "_сжат", "pages": "_страницы", "signed": "_подписан", "merged": "объединено", "images": "изображения"},
+    "uk": {"copy": "_копія", "protected": "_захищений", "unprotected": "_розблокований", "small": "_стиснутий", "pages": "_сторінки", "signed": "_підписаний", "merged": "обʼєднано", "images": "зображення"},
+    "bg": {"copy": "_копие", "protected": "_защитен", "unprotected": "_отключен", "small": "_компресиран", "pages": "_страници", "signed": "_подписан", "merged": "обединено", "images": "изображения"},
+    "mk": {"copy": "_копија", "protected": "_заштитен", "unprotected": "_отклучен", "small": "_компресиран", "pages": "_страници", "signed": "_потпишан", "merged": "споено", "images": "слики"},
+    "hu": {"copy": "_másolat", "protected": "_védett", "unprotected": "_feloldott", "small": "_tömörített", "pages": "_oldalak", "signed": "_aláírt", "merged": "egyesített", "images": "képek"},
+    "ro": {"copy": "_copie", "protected": "_protejat", "unprotected": "_deblocat", "small": "_comprimat", "pages": "_pagini", "signed": "_semnat", "merged": "combinat", "images": "imagini"},
+    "tr": {"copy": "_kopya", "protected": "_korumalı", "unprotected": "_kilidi_açık", "small": "_sıkıştırılmış", "pages": "_sayfalar", "signed": "_imzalı", "merged": "birleştirilmiş", "images": "resimler"},
+    "ja": {"copy": "_コピー", "protected": "_保護済み", "unprotected": "_ロック解除", "small": "_圧縮", "pages": "_ページ", "signed": "_署名済み", "merged": "結合", "images": "画像"},
+    "zh-CN": {"copy": "_副本", "protected": "_已保护", "unprotected": "_已解锁", "small": "_已压缩", "pages": "_页面", "signed": "_已签名", "merged": "合并", "images": "图像"},
+    "zh-TW": {"copy": "_副本", "protected": "_已保護", "unprotected": "_已解鎖", "small": "_已壓縮", "pages": "_頁面", "signed": "_已簽署", "merged": "合併", "images": "影像"},
 }
 
 CODE = re.compile(r"[A-Z][A-Z_]+")
@@ -259,6 +300,7 @@ class Api:
             "ocrLangs": ocr.available_languages(),
             "jobs": self._jobs.running(),
             "version": VERSION,
+            "os": f"{platform.system()} {platform.release()} ({platform.version()})",
         }
 
     @rpc
@@ -980,8 +1022,10 @@ class Api:
                     files = pt.export_page_images(snap, pages, out, base, a.get("format", "png"), dpi,
                                                   progress=job.progress, lock=lock)
                     return {"path": out, "count": len(files)}
-                files = pt.extract_embedded_images(snap, pages, out, base, progress=job.progress, lock=lock)
-                return {"path": out, "count": len(files)}
+                skipped = []
+                files = pt.extract_embedded_images(snap, pages, out, base, progress=job.progress, lock=lock,
+                                                   skipped=skipped)
+                return {"path": out, "count": len(files), "skipped": len(skipped)}
             finally:
                 if not isinstance(snap, bytes):
                     with lock:

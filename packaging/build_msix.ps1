@@ -50,7 +50,7 @@ $pri = 'dist\pri'
 Clear-Folder $pri
 New-Item -ItemType Directory $pri | Out-Null
 Copy-Item -Recurse 'packaging\assets' (Join-Path $pri 'Assets')
-Invoke-Tool 'makepri.exe' @('createconfig', '/cf', 'dist\priconfig.xml', '/dq', 'en-US', '/pv', '10.0.0', '/o')
+Invoke-Tool 'makepri.exe' @('createconfig', '/cf', 'dist\priconfig.xml', '/dq', 'en-us_nb-no_sr-latn-rs_sv-se_da-dk_fi-fi_de-de_fr-fr_it-it_es-es_pt-pt_pt-br_el-gr_ru-ru_uk-ua_bg-bg_mk-mk_hu-hu_ro-ro_tr-tr_ja-jp_zh-cn_zh-tw', '/pv', '10.0.0', '/o')
 Invoke-Tool 'makepri.exe' @('new', '/pr', $pri, '/cf', 'dist\priconfig.xml', '/mn', "$layout\AppxManifest.xml",
     '/of', "$layout\resources.pri", '/o')
 

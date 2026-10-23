@@ -23,6 +23,7 @@ from .paths import FONT_SANS, write_atomic
 log = logging.getLogger("aurora.pdftools")
 
 FONT_NAME = "AuroraSans"  # resource name for the bundled Unicode font (Latin, Cyrillic, Greek)
+CJK_NAME = "AuroraCJK"  # MuPDF's built-in Droid Sans Fallback, for Chinese, Japanese and Korean
 
 # --- encryption / permissions -------------------------------------------------
 
@@ -278,19 +279,38 @@ def _font() -> pymupdf.Font:
     return pymupdf.Font(fontfile=str(FONT_SANS))
 
 
+@lru_cache(maxsize=1)
+def _cjk_font() -> pymupdf.Font:
+    return pymupdf.Font("cjk")
+
+
+def _font_for(text: str) -> pymupdf.Font:
+    """Noto Sans, unless the text has a character it lacks (Chinese, Japanese, Korean): then the CJK font,
+    which also has Latin, Cyrillic and Greek. One font per text, so widths and drawing agree."""
+    noto = _font()
+    return noto if all(c.isspace() or noto.has_glyph(ord(c)) for c in text) else _cjk_font()
+
+
 def text_length(text: str, fontsize: float) -> float:
-    return _font().text_length(text, fontsize=fontsize)
+    return _font_for(text).text_length(text, fontsize=fontsize)
 
 
 def _insert_unicode_text(page: pymupdf.Page, point, text: str, **kw) -> None:
-    page.insert_text(point, text, fontname=FONT_NAME, fontfile=str(FONT_SANS), **kw)
+    if _font_for(text) is _font():
+        page.insert_text(point, text, fontname=FONT_NAME, fontfile=str(FONT_SANS), **kw)
+    else:
+        # shortcut: the whole CJK font is embedded (about 1.7 MB once per file), not a subset; subset on save if files grow
+        page.insert_font(fontname=CJK_NAME, fontbuffer=_cjk_font().buffer)
+        page.insert_text(point, text, fontname=CJK_NAME, **kw)
 
 
-@lru_cache(maxsize=1)
-def _outlines():
+@lru_cache(maxsize=2)
+def _outlines(cjk: bool = False):
+    import io
+
     from fontTools.ttLib import TTFont  # comes with pdf2docx
 
-    font = TTFont(str(FONT_SANS))
+    font = TTFont(io.BytesIO(_cjk_font().buffer)) if cjk else TTFont(str(FONT_SANS))
     return font.getGlyphSet(), font.getBestCmap(), font["head"].unitsPerEm
 
 
@@ -300,7 +320,7 @@ def _draw_text_outlines(page: pymupdf.Page, mat: pymupdf.Matrix, text: str, font
     whatever the permissions say."""
     from fontTools.pens.basePen import BasePen
 
-    glyphs, cmap, upem = _outlines()
+    glyphs, cmap, upem = _outlines(_font_for(text) is not _font())
     s = fontsize / upem
     shape = page.new_shape()
     x = 0.0
@@ -855,8 +875,10 @@ def export_page_images(doc, pages, out_dir, base, fmt="png", dpi=150, progress: 
 MAX_IMAGE_PIXELS = 256_000_000  # an image saved as PNG is decoded first: a small file can hold gigabytes of pixels
 
 
-def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None, lock=_NO_LOCK) -> list[str]:
-    """Save every distinct embedded image on ``pages`` in its native format (none bigger than MAX_IMAGE_PIXELS)."""
+def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None, lock=_NO_LOCK,
+                            skipped: list | None = None) -> list[str]:
+    """Save every distinct embedded image on ``pages`` in its native format; one bigger than MAX_IMAGE_PIXELS
+    is left out and its xref added to ``skipped``, so the user can be told."""
     seen: set[int] = set()
     written = []
     for k, pno in enumerate(pages):
@@ -868,6 +890,8 @@ def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None
             seen.add(xref)
             if width * height > MAX_IMAGE_PIXELS:
                 log.warning("embedded image %d (%dx%d) skipped: too big", xref, width, height)
+                if skipped is not None:
+                    skipped.append(xref)
                 continue
             with lock:
                 data = doc.extract_image(xref)

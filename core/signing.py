@@ -467,7 +467,7 @@ def appearance_pdf(width: float, height: float, *, lines: list[tuple[str, float,
     import pymupdf
 
     from .geom import rgb
-    from .pdftools import FONT_NAME, FONT_SANS
+    from .pdftools import _insert_unicode_text
 
     lines = [(text, size * unit, color) for text, size, color in lines]
     draw_w, draw_h = (height, width) if rotate in (90, 270) else (width, height)
@@ -485,7 +485,7 @@ def appearance_pdf(width: float, height: float, *, lines: list[tuple[str, float,
     for text, size, color in lines:
         s = size * scale
         y += s * 1.05
-        pg.insert_text((text_x, y), text, fontsize=s, fontname=FONT_NAME, fontfile=str(FONT_SANS), color=rgb(color))
+        _insert_unicode_text(pg, (text_x, y), text, fontsize=s, color=rgb(color))
         y += s * 0.2
     if rotate in (90, 180, 270):
         out = pymupdf.open()

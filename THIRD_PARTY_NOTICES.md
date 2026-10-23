@@ -25,12 +25,13 @@ Testene bruker i tillegg pytest (MIT) og Playwright (Apache-2.0).
 | Fil | Opphav | Lisens |
 |---|---|---|
 | `resources/fonts/NotoSans-Regular.ttf` | The Noto Project Authors | SIL Open Font License 1.1, `resources/fonts/OFL-NotoSans.txt` |
+| Droid Sans Fallback (built into PyMuPDF/MuPDF, used for Chinese, Japanese and Korean text) | Google | Apache-2.0 |
 | `web/fonts/inter-*.woff2` | The Inter Project Authors | SIL Open Font License 1.1, `web/fonts/licenses/OFL-Inter.txt` |
 | `web/fonts/space-grotesk-*.woff2` | The Space Grotesk Project Authors | SIL Open Font License 1.1, `web/fonts/licenses/OFL-SpaceGrotesk.txt` |
 | `web/fonts/GreatVibes-Regular.ttf` | The Great Vibes Pro Project Authors | SIL Open Font License 1.1, `web/fonts/licenses/OFL-GreatVibes.txt` |
 | `web/fonts/Caveat-Medium.ttf` | The Caveat Project Authors | SIL Open Font License 1.1, `web/fonts/licenses/OFL-Caveat.txt` |
 | `web/fonts/MarckScript-Regular.ttf` | Denis Masharov og Marck Fogel | SIL Open Font License 1.1, `web/fonts/licenses/OFL-MarckScript.txt` |
-| `resources/tessdata/*.traineddata` | tesseract-ocr/tessdata_fast (engelsk, norsk, serbisk kyrillisk og latinsk) | Apache-2.0, `resources/tessdata/LICENSE` |
+| `resources/tessdata/*.traineddata` | tesseract-ocr/tessdata_fast (23 språk, se `core/ocr.py`) | Apache-2.0, `resources/tessdata/LICENSE` |
 
 Ikonene i `web/js/icons.js` og logoen i `web/assets/aurora.ico` er laget for dette programmet.
 

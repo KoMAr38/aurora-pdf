@@ -17,7 +17,7 @@ def resource(*parts: str) -> Path:
     return app_root().joinpath(*parts)
 
 
-VERSION = "2.0.0"  # the Store package is this + ".0" (packaging/AppxManifest.xml; a test keeps them equal)
+VERSION = "2.0.1"  # the Store package is this + ".0" (packaging/AppxManifest.xml; a test keeps them equal)
 WEB_DIR = resource("web")
 FONT_SANS = resource("resources", "fonts", "NotoSans-Regular.ttf")
 TESSDATA = resource("resources", "tessdata")

@@ -73,6 +73,7 @@ window.Aurora = window.Aurora || {};
     layers: '<path d="M12 3.5L3 8.5l9 5 9-5z"/><path d="M3 12.5l9 5 9-5M3 16.5l9 5 9-5" opacity=".7"/>',
     compress: '<path d="M8 3.5v5H3M16 3.5v5h5M8 20.5v-5H3M16 20.5v-5h5"/>',
     keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13.5h.01M18 13.5h.01M9 14.5h6"/>',
+    feedback: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4A1.5 1.5 0 0 1 4 14.5z"/><path d="M12 7.2v4.2M12 13.6v.2"/>',
     blank: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/>',
   };
   A.icon = function (name, size, cls) {

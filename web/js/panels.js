@@ -427,7 +427,9 @@
   PANELS.ocr = (root) => {
     const doc = S.doc;
     const langs = S.ocrLangs || {};
-    const pref = (S.settings.ocr_langs || { sr: "srp_latn+eng", no: "nor+eng", en: "eng" }[S.lang] || "eng").split("+");
+    const own = { sr: "srp_latn", no: "nor", de: "deu", fr: "fra", it: "ita", es: "spa", pt: "por", "pt-BR": "por", sv: "swe", da: "dan",
+      fi: "fin", el: "ell", ru: "rus", uk: "ukr", bg: "bul", mk: "mkd", hu: "hun", ro: "ron", tr: "tur", ja: "jpn", "zh-CN": "chi_sim", "zh-TW": "chi_tra" }[S.lang];
+    const pref = (S.settings.ocr_langs || (own ? own + "+eng" : "eng")).split("+");
     root.innerHTML = head("ocr", "ocrTitle", "ocrSub") +
       `<div class="status ${doc.scanned ? "warn" : "ok"}">${A.icon(doc.scanned ? "ocr" : "check", 18)}<div><b>${A.esc(A.t(doc.scanned ? "looksScanned" : "hasText"))}</b><small>${A.esc(A.t(doc.scanned ? "looksScannedHint" : "hasTextHint"))}</small></div></div>` +
       `<div class="field"><label>${A.esc(A.t("ocrLangs"))}</label>${Object.entries(langs).map(([code, name]) => check("ol_" + code, name, "", pref.includes(code))).join("")}</div>` +
@@ -474,7 +476,10 @@
       const r = await A.call("export_start", payload);
       if (!r) return;
       const j = await A.runJob(r.job, A.t("exporting"));
-      if (j.state === "done") A.savedToast(j.result.path, kind === "images" || kind === "embedded" ? "exportedN" : "savedTo");
+      if (j.state === "done") {
+        A.savedToast(j.result.path, kind === "images" || kind === "embedded" ? "exportedN" : "savedTo");
+        if (j.result.skipped) A.toast(A.t("imagesSkipped", { n: j.result.skipped }), "info");
+      }
       else if (j.state === "cancelled") A.toast(A.t("cancelled"), "info");
       else A.toast(A.t("e_ERROR") + " " + (j.error || ""), "bad");
     };
@@ -585,7 +590,8 @@
         <div class="linkrow"><button class="lnk" id="sKeys">${A.icon("keyboard", 14)}${A.esc(A.t("shortcuts"))}</button>
         <button class="lnk" data-url="${SOURCE}">${A.esc(A.t("sourceCode"))}</button>
         <button class="lnk" data-url="${SOURCE}/blob/main/LICENSE">${A.esc(A.t("licenseLnk"))}</button>
-        <button class="lnk" data-url="${SOURCE}/blob/main/THIRD_PARTY_NOTICES.md">${A.esc(A.t("thirdParty"))}</button></div>`);
+        <button class="lnk" data-url="${SOURCE}/blob/main/THIRD_PARTY_NOTICES.md">${A.esc(A.t("thirdParty"))}</button>
+        <button class="lnk" id="sFeedback">${A.icon("feedback", 14)}${A.esc(A.t("feedback"))}</button></div>`);
     wire(root);
     A.$("#sLang", root).addEventListener("change", (e) => A.setLang(e.target.value));
     A.$("#sTheme", root).addEventListener("change", (e) => A.setTheme(e.detail));
@@ -593,8 +599,48 @@
     A.$("#sNight", root).addEventListener("change", (e) => A.setNight(e.target.checked));
     A.$("#sFit", root).addEventListener("change", (e) => { A.saveSettings({ fit: e.detail }); if (S.doc) A.fit(e.detail); });
     A.$("#sKeys", root).onclick = A.showShortcuts;
+    A.$("#sFeedback", root).onclick = () => A.feedback();
     root.querySelectorAll("[data-url]").forEach((b) => { b.onclick = () => A.call("open_url", { url: b.dataset.url }, { noBusy: true }); });
   };
+
+  /* ---------- report a problem / suggest a feature ---------- */
+  const SUPPORT = "veselim35@gmail.com"; // the support address in the Store listing and on the site
+  /** The text, the program and Windows versions and the UI language go into a new e-mail or GitHub issue;
+   *  the user sends it, the program sends nothing. Returns the URL it opened (null when cancelled). */
+  A.feedback = async () => {
+    const r = await A.modal({
+      title: A.t("feedback"),
+      body: `<div class="field"><label>${A.esc(A.t("type"))}</label><select class="input" id="fbKind">
+          <option value="bug">${A.esc(A.t("fbBug"))}</option><option value="idea">${A.esc(A.t("fbIdea"))}</option></select></div>
+        <div class="field"><label>${A.esc(A.t("fbText"))}</label><textarea class="input" id="fbText" rows="6" maxlength="1500"></textarea></div>
+        <p class="hint">${A.esc(A.t("fbHint", { email: SUPPORT }))}</p>`,
+      onOpen: (m) => {
+        const kind = A.$("#fbKind", m.el), text = A.$("#fbText", m.el);
+        const ph = () => { text.placeholder = A.t(kind.value === "bug" ? "fbPhBug" : "fbPhIdea"); };
+        kind.onchange = ph;
+        ph();
+      },
+      buttons: [
+        { label: A.t("cancel"), kind: "ghost", value: null },
+        { label: A.t("fbGithub"), kind: "", onClick: (m) => pickFeedback(m, "github") },
+        { label: A.t("fbMail"), kind: "primary", onClick: (m) => pickFeedback(m, "mail") },
+      ],
+    });
+    if (!r) return null;
+    const tag = r.kind === "bug" ? "Bug" : "Idea";
+    const first = r.text.split("\n")[0].slice(0, 70);
+    const body = `${r.text}\n\n---\nAurora PDF ${S.version} · ${S.os} · ${S.lang}`;
+    const url = r.via === "mail"
+      ? `mailto:${SUPPORT}?subject=${encodeURIComponent(`Aurora PDF ${tag}: ${first}`)}&body=${encodeURIComponent(body)}`
+      : `${SOURCE}/issues/new?title=${encodeURIComponent(`[${tag}] ${first}`)}&body=${encodeURIComponent(body)}`;
+    await A.call("open_url", { url }, { noBusy: true });
+    return url;
+  };
+  function pickFeedback(m, via) {
+    const text = A.$("#fbText", m.el).value.trim();
+    if (!text) { A.toast(A.t("fbEmpty"), "bad"); return false; }
+    return { kind: A.$("#fbKind", m.el).value, text, via };
+  }
 
   let panelT = 0;
   A.on("doc", ({ prev, doc }) => {

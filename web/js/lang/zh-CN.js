@@ -540,5 +540,17 @@ Aurora.addLang("zh-CN", "简体中文", {
   "licenseLnk": "许可证",
   "thirdParty": "第三方声明",
   "version": "版本",
-  "noDoc": "请先打开文档。"
+  "noDoc": "请先打开文档。",
+  "feedback": "报告问题或建议新功能",
+  "fbBug": "问题",
+  "fbIdea": "建议",
+  "fbText": "描述",
+  "fbPhBug": "你做了什么，发生了什么？",
+  "fbPhIdea": "你希望程序能做什么？",
+  "fbHint": "将打开你的邮件程序或 GitHub，并附上此文本以及程序和 Windows 的版本。在你自己发送之前不会发送任何内容。地址：{email}",
+  "fbMail": "通过电子邮件发送",
+  "fbGithub": "在 GitHub 上打开",
+  "fbEmpty": "请先填写描述。",
+  "e_UNDO_DAMAGED": "无法读取该撤消步骤，已将其移除。文档未更改。",
+  "imagesSkipped": "因过大而跳过的图像：{n}"
 });

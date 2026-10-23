@@ -540,5 +540,17 @@ Aurora.addLang("fr", "Français", {
   "licenseLnk": "Licence",
   "thirdParty": "Mentions de tiers",
   "version": "Version",
-  "noDoc": "Ouvrez d'abord un document."
+  "noDoc": "Ouvrez d'abord un document.",
+  "feedback": "Signaler un problème ou suggérer une fonction",
+  "fbBug": "Problème",
+  "fbIdea": "Suggestion",
+  "fbText": "Description",
+  "fbPhBug": "Qu'avez-vous fait, et que s'est-il passé ?",
+  "fbPhIdea": "Que devrait savoir faire le programme ?",
+  "fbHint": "Ouvre votre messagerie ou GitHub avec ce texte et les versions du programme et de Windows. Rien n'est envoyé tant que vous ne l'envoyez pas. Adresse : {email}",
+  "fbMail": "Envoyer par e-mail",
+  "fbGithub": "Ouvrir sur GitHub",
+  "fbEmpty": "Écrivez d'abord une description.",
+  "e_UNDO_DAMAGED": "Cette étape d'annulation n'a pas pu être lue, elle a donc été supprimée. Le document n'a pas changé.",
+  "imagesSkipped": "Images ignorées car trop grandes : {n}"
 });

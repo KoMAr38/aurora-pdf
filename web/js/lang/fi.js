@@ -540,5 +540,17 @@ Aurora.addLang("fi", "Suomi", {
   "licenseLnk": "Lisenssi",
   "thirdParty": "Kolmannen osapuolen ilmoitukset",
   "version": "Versio",
-  "noDoc": "Avaa ensin asiakirja."
+  "noDoc": "Avaa ensin asiakirja.",
+  "feedback": "Ilmoita ongelmasta tai ehdota toimintoa",
+  "fbBug": "Ongelma",
+  "fbIdea": "Ehdotus",
+  "fbText": "Kuvaus",
+  "fbPhBug": "Mitä teit, ja mitä tapahtui?",
+  "fbPhIdea": "Mitä ohjelman pitäisi osata?",
+  "fbHint": "Avaa sähköpostiohjelmasi tai GitHubin tällä tekstillä sekä ohjelman ja Windowsin versioilla. Mitään ei lähetetä ennen kuin lähetät sen itse. Osoite: {email}",
+  "fbMail": "Lähetä sähköpostilla",
+  "fbGithub": "Avaa GitHubissa",
+  "fbEmpty": "Kirjoita ensin kuvaus.",
+  "e_UNDO_DAMAGED": "Kumoamisvaihetta ei voitu lukea, joten se poistettiin. Asiakirja on ennallaan.",
+  "imagesSkipped": "Ohitetut kuvat, koska ne ovat liian suuria: {n}"
 });
