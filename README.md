@@ -27,7 +27,7 @@ Programmet har 465 automatiske tester. 71 av dem styrer det ekte grensesnittet m
 | Eksport | Word (.docx), ren tekst, sider som PNG eller JPG, og bildene som ligger i filen |
 | Annet | Slå sammen filer, dokumentinfo, komprimere store bilder, åpne bilder som PDF |
 
-Grensesnittet finnes på 21 språk: norsk, engelsk, serbisk, svensk, dansk, finsk, tysk, fransk, italiensk, spansk, portugisisk (Portugal og Brasil), gresk, russisk, ukrainsk, bulgarsk, makedonsk, ungarsk, rumensk, tyrkisk og japansk. Første gang velger programmet språket til Windows. Temaet er lyst eller mørkt. Står temaet på automatisk, følger det innstillingen for apper i Windows.
+Grensesnittet finnes på 22 språk: norsk, engelsk, serbisk, svensk, dansk, finsk, tysk, fransk, italiensk, spansk, portugisisk (Portugal og Brasil), gresk, russisk, ukrainsk, bulgarsk, makedonsk, ungarsk, rumensk, tyrkisk, japansk og kinesisk (forenklet). Første gang velger programmet språket til Windows. Temaet er lyst eller mørkt. Står temaet på automatisk, følger det innstillingen for apper i Windows.
 
 ![Skjema fylt ut og signert med sertifikat, i lyst tema](docs/bilder/signatur.png)
 
@@ -77,7 +77,7 @@ Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 
 **Ett stilark for begge temaene.** Alle fargene ligger i variabler. Det mørke temaet er standardverdiene, og det lyse overstyrer dem i én blokk. Tittellinjen i Windows får de samme fargene, og vinduet starter i riktig farge, så det ikke blinker mørkt før et lyst tema er lastet.
 
-**Oversettelsene er testet.** De 541 tekstene i grensesnittet ligger i én tabell med norsk, engelsk og serbisk, og de 18 andre språkene har hver sin fil i web/js/lang. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler på et språk, ikke brukes, eller har andre plassholdere enn den engelske.
+**Oversettelsene er testet.** De 541 tekstene i grensesnittet ligger i én tabell med norsk, engelsk og serbisk, og de 19 andre språkene har hver sin fil i web/js/lang. En test leser koden, finner hver tekstnøkkel som brukes, og feiler hvis en tekst mangler på et språk, ikke brukes, eller har andre plassholdere enn den engelske.
 
 ### Testing
 
@@ -86,7 +86,7 @@ Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 | `tests/test_engine.py` | 288 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding og at tekst utenfor området står der den sto, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
 | `tests/test_api.py` | 79 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 23 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
-| `tests/test_i18n.py` | 5 | Oversettelsene på alle 21 språk |
+| `tests/test_i18n.py` | 5 | Oversettelsene på alle 22 språk |
 | `tests/e2e/test_ui.py` | 71 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:

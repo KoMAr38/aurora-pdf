@@ -353,7 +353,7 @@ window.Aurora = window.Aurora || {};
     ["resetFieldsMsg", "Isprazniti sva polja obrasca?", "Clear every form field?", "Tømme alle skjemafeltene?"],
     ["flattenFields", "Utisni u stranu", "Flatten", "Flat ut"],
     ["flatten", "Utisni", "Flatten", "Flat ut"],
-    ["flattenMsg", "Polja i komentari postaju deo strane i više se ne mogu menjati. Do čuvanja možeš da poništiš.", "Fields and comments become part of the page and can no longer be edited. You can undo until you save.", "Felt og kommentarer blir en del av siden og kan ikke lenger redigeres. Du kan angre til du lagrer."],
+    ["flattenMsg", "Polja obrasca postaju deo strane i više se ne mogu menjati. Komentari ostaju kakvi jesu. Do čuvanja možeš da poništiš.", "Form fields become part of the page and can no longer be edited. Comments stay as they are. You can undo until you save.", "Skjemafeltene blir en del av siden og kan ikke lenger redigeres. Kommentarene blir som de er. Du kan angre til du lagrer."],
     ["handSig", "Tvoji potpisi", "Your signatures", "Dine signaturer"],
     ["noSignatures", "Nema sačuvanih potpisa. Napravi jedan i biće tu i sledeći put.", "No saved signatures. Make one and it will be here next time too.", "Ingen lagrede signaturer. Lag en, så er den her neste gang også."],
     ["removeSignature", "Ukloni potpis", "Remove signature", "Fjern signaturen"],
@@ -598,14 +598,15 @@ window.Aurora = window.Aurora || {};
   A.LANGS = [["sr", "Srpski"], ["en", "English"], ["no", "Norsk"]];
   A.addLang = (code, name, texts) => { I[code] = texts; A.LANGS.push([code, name]); };
 
-  /* plural form of a counted word: stem + One / Few / Many (Serbian, Russian and Ukrainian share the 1 / 2-4 / 5+ rule) */
+  /* plural form of a counted word: stem + One / Few / Many (Serbian, Russian and Ukrainian share the 1 / 2-4 / 5+ rule; Macedonian has one form for 1, 21, 31 ...) */
   A.plural = (n, stem) => {
     const lang = (A.S && A.S.lang) || "sr";
     let form = n === 1 ? "One" : "Many";
     if (lang === "sr" || lang === "ru" || lang === "uk") {
       const d = n % 10, h = n % 100;
       form = d === 1 && h !== 11 ? "One" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? "Few" : "Many";
-    } else if (n !== 1) form = "Few";
+    } else if (lang === "mk") form = n % 10 === 1 && n % 100 !== 11 ? "One" : "Few"; // 21 страница, 11 страници
+    else if (n !== 1) form = "Few";
     return A.t(stem + form);
   };
 })(window.Aurora);

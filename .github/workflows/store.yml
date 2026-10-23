@@ -27,6 +27,8 @@ jobs:
       - name: Selftest of the built program
         shell: pwsh
         run: |
+          # the source run above left its report there: gone first, so only this program's report is shown
+          Remove-Item "$env:APPDATA\AuroraPDF\selftest.txt" -ErrorAction SilentlyContinue
           $p = Start-Process 'dist\AuroraPDF\AuroraPDF.exe' -ArgumentList '--selftest' -Wait -PassThru
           Get-Content "$env:APPDATA\AuroraPDF\selftest.txt"
           if ($p.ExitCode -ne 0) { throw "selftest of AuroraPDF.exe failed ($($p.ExitCode))" }

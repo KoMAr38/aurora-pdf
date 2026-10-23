@@ -6,6 +6,7 @@ and locking. Coordinates coming from the UI are in display space - see core.geom
 """
 from __future__ import annotations
 
+import contextlib
 import datetime
 import io
 import logging
@@ -17,7 +18,7 @@ from typing import Callable, Iterable, Sequence
 import pymupdf
 
 from .geom import page_ctm, rgb, rounded, set_page_key, to_insert, to_text, turn
-from .paths import FONT_SANS
+from .paths import FONT_SANS, write_atomic
 
 log = logging.getLogger("aurora.pdftools")
 
@@ -224,7 +225,7 @@ def save_pdf(
             )
         else:
             opts["encryption"] = pymupdf.PDF_ENCRYPT_NONE
-        tmp.save(out_path, **opts)
+        write_atomic(out_path, lambda path: tmp.save(path, **opts))
     finally:
         tmp.close()
 
@@ -244,8 +245,8 @@ def protection_args(protection: dict | None) -> dict:
 def parse_page_range(spec: str, total: int) -> list[int]:
     """Parse ``"1-3,5,8-"`` (1-based, inclusive) into sorted 0-based indices.
 
-    Empty/``"all"`` means every page. Out-of-range parts are clamped; an empty result
-    raises ValueError so the caller never silently does nothing.
+    Empty/``"all"`` means every page. An open or too long end is clamped ("8-", "2-99999"); a part that starts
+    past the last page, or an empty result, raises ValueError, so "3,50" is never taken for page 3 alone.
     """
     spec = (spec or "").strip().lower()
     if spec in ("", "all", "*", "sve", "alle"):
@@ -261,6 +262,8 @@ def parse_page_range(spec: str, total: int) -> list[int]:
             end = int(b) if b.strip() else total
         else:
             start = end = int(chunk)
+        if start > total:
+            raise ValueError(f"page {start} of {total}")
         out.update(range(max(start, 1) - 1, min(end, total)))  # "2-99999999" must not count to 99999999
     if not out:
         raise ValueError("empty page range")
@@ -281,6 +284,60 @@ def text_length(text: str, fontsize: float) -> float:
 
 def _insert_unicode_text(page: pymupdf.Page, point, text: str, **kw) -> None:
     page.insert_text(point, text, fontname=FONT_NAME, fontfile=str(FONT_SANS), **kw)
+
+
+@lru_cache(maxsize=1)
+def _outlines():
+    from fontTools.ttLib import TTFont  # comes with pdf2docx
+
+    font = TTFont(str(FONT_SANS))
+    return font.getGlyphSet(), font.getBestCmap(), font["head"].unitsPerEm
+
+
+def _draw_text_outlines(page: pymupdf.Page, mat: pymupdf.Matrix, text: str, fontsize: float, **finish) -> None:
+    """Draw ``text`` as filled glyph shapes; ``mat`` takes a point (x right, y down, baseline at y=0) to the space
+    page drawings use. A watermark drawn this way is no text at all, so no reader can select, copy or search it,
+    whatever the permissions say."""
+    from fontTools.pens.basePen import BasePen
+
+    glyphs, cmap, upem = _outlines()
+    s = fontsize / upem
+    shape = page.new_shape()
+    x = 0.0
+
+    class Pen(BasePen):
+        def pt(self, p):
+            return pymupdf.Point(x + p[0] * s, -p[1] * s) * mat
+
+        def _moveTo(self, p):
+            self.first = self.last = self.pt(p)
+
+        def _lineTo(self, p):
+            q = self.pt(p)
+            shape.draw_line(self.last, q)
+            self.last = q
+
+        def _curveToOne(self, p1, p2, p3):
+            q = self.pt(p3)
+            shape.draw_bezier(self.last, self.pt(p1), self.pt(p2), q)
+            self.last = q
+
+        def _qCurveToOne(self, p1, p2):  # quadratic -> cubic
+            c, q = self.pt(p1), self.pt(p2)
+            shape.draw_bezier(self.last, self.last + (c - self.last) * (2 / 3), q + (c - q) * (2 / 3), q)
+            self.last = q
+
+        def _closePath(self):
+            if self.last != self.first:
+                shape.draw_line(self.last, self.first)
+
+    for ch in text:
+        name = cmap.get(ord(ch), ".notdef")
+        glyphs[name].draw(Pen(glyphs))
+        x += glyphs[name].width * s
+    overlay = finish.pop("overlay", True)
+    shape.finish(color=None, closePath=False, **finish)
+    shape.commit(overlay=overlay)
 
 
 # --- watermark / header & footer ---------------------------------------------
@@ -329,14 +386,11 @@ def watermark_text(
 
 
 def _stamp_text(page, center, text, fontsize, color_rgb, opacity, angle, behind) -> None:
-    m, unit = to_text(page)
-    pivot, fontsize = pymupdf.Point(center) * m, fontsize * unit
-    start = pivot + (-text_length(text, fontsize) / 2, fontsize * 0.35)
-    morph = (pivot, pymupdf.Matrix(angle + page.rotation))
-    _insert_unicode_text(
-        page, start, text, fontsize=fontsize, color=color_rgb,
-        fill_opacity=opacity, morph=morph, overlay=not behind,
-    )
+    # planned on screen (y down, so a visual counter-clockwise turn is a negative angle), then into the space
+    # drawings take, which is insert_image's
+    mat = (pymupdf.Matrix(1, 0, 0, 1, -text_length(text, fontsize) / 2, fontsize * 0.35) * pymupdf.Matrix(-angle)
+           * pymupdf.Matrix(1, 0, 0, 1, *center) * to_insert(page))
+    _draw_text_outlines(page, mat, text, fontsize, fill=color_rgb, fill_opacity=opacity, overlay=not behind)
 
 
 def _prepare_png(image: str | bytes, opacity: float = 1.0, rotate: int = 0) -> tuple[bytes, int, int]:
@@ -569,7 +623,7 @@ def merge(paths: Sequence[str], out_path: str, passwords: dict[str, str] | None 
             out.insert_pdf(src)
             src.close()
         annots.forget_passwords(out)  # as in every file this program writes
-        out.save(out_path, garbage=3, deflate=True)
+        write_atomic(out_path, lambda path: out.save(path, garbage=3, deflate=True))
         return len(out)
     finally:
         out.close()
@@ -613,7 +667,7 @@ def images_to_pdf(image_paths: Sequence[str], out_path: str) -> int:
     out = pymupdf.open()
     try:
         insert_images(out, image_paths, 0)
-        out.save(out_path, garbage=3, deflate=True)
+        write_atomic(out_path, lambda path: out.save(path, garbage=3, deflate=True))
         return len(out)
     finally:
         out.close()
@@ -627,7 +681,7 @@ MAX_RENDER_PIXELS = 36_000_000
 def render_pixmap(page: pymupdf.Page, width_px: int) -> pymupdf.Pixmap:
     """Render ``page`` at ``width_px`` device pixels wide (aspect kept), RGB without alpha."""
     w, h = page.rect.width, page.rect.height
-    scale = max(0.05, min(width_px / w, 10.0))
+    scale = min(width_px / w, 10.0)  # no floor: a thumbnail of a giant page is a thumbnail too
     if w * h * scale * scale > MAX_RENDER_PIXELS:
         scale = (MAX_RENDER_PIXELS / (w * h)) ** 0.5
     return page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
@@ -740,8 +794,7 @@ def add_attachment(doc: pymupdf.Document, path: str) -> str:
 
 
 def save_attachment(doc: pymupdf.Document, name: str, out_path: str) -> None:
-    with open(out_path, "wb") as f:
-        f.write(doc.embfile_get(name))
+    write_atomic(out_path, doc.embfile_get(name))
 
 
 def delete_attachment(doc: pymupdf.Document, name: str) -> None:
@@ -763,42 +816,61 @@ def _tick(progress: Progress, done: int, total: int) -> None:
         raise Cancelled()
 
 
-def export_text(doc: pymupdf.Document, out_path: str, pages: Sequence[int] | None = None) -> None:
-    targets = range(len(doc)) if pages is None else pages
-    with open(out_path, "w", encoding="utf-8") as f:
-        for k, pno in enumerate(targets):
-            if k:
-                f.write("\n\f\n")
-            f.write(doc[pno].get_text())
+# The exports below take ``lock`` around each page's MuPDF work and write their files outside it: given the
+# session lock, the viewer goes on drawing pages while a long export runs (MuPDF allows one thread at a time).
+_NO_LOCK = contextlib.nullcontext()
 
 
-def export_page_images(doc, pages, out_dir, base, fmt="png", dpi=150, progress: Progress = None) -> list[str]:
+def export_text(doc: pymupdf.Document, out_path: str, pages: Sequence[int] | None = None, lock=_NO_LOCK) -> None:
+    parts = []
+    for pno in range(len(doc)) if pages is None else pages:
+        with lock:
+            parts.append(doc[pno].get_text())
+    write_atomic(out_path, "\n\f\n".join(parts).encode("utf-8"))
+
+
+def capped_dpi(page: pymupdf.Page, dpi: int) -> int:
+    """``dpi``, lowered as far as a page of that size needs to stay within MAX_RENDER_PIXELS."""
+    area = max(page.rect.width * page.rect.height, 1.0) / (72 * 72)  # square inches
+    return max(1, min(int(dpi), int((MAX_RENDER_PIXELS / area) ** 0.5)))
+
+
+def export_page_images(doc, pages, out_dir, base, fmt="png", dpi=150, progress: Progress = None,
+                       lock=_NO_LOCK) -> list[str]:
     fmt = "jpg" if str(fmt).lower() in ("jpg", "jpeg") else "png"
     written = []
     for k, pno in enumerate(pages):
-        pix = doc[pno].get_pixmap(dpi=int(dpi), alpha=False)
+        with lock:
+            page = doc[pno]
+            pix = page.get_pixmap(dpi=capped_dpi(page, dpi), alpha=False)
+            data = None if fmt == "jpg" else pix.tobytes("png")
         path = free_path(os.path.join(out_dir, f"{base}_{pno + 1}.{fmt}"))
-        if fmt == "jpg":
-            with open(path, "wb") as f:
-                f.write(encode_jpeg(pix, 92))
-        else:
-            pix.save(path)
+        with open(path, "wb") as f:
+            f.write(encode_jpeg(pix, 92) if data is None else data)
         written.append(path)
         _tick(progress, k + 1, len(pages))
     return written
 
 
-def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None) -> list[str]:
-    """Save every distinct embedded image on ``pages`` in its native format."""
+MAX_IMAGE_PIXELS = 256_000_000  # an image saved as PNG is decoded first: a small file can hold gigabytes of pixels
+
+
+def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None, lock=_NO_LOCK) -> list[str]:
+    """Save every distinct embedded image on ``pages`` in its native format (none bigger than MAX_IMAGE_PIXELS)."""
     seen: set[int] = set()
     written = []
     for k, pno in enumerate(pages):
-        for img in doc[pno].get_images(full=True):
-            xref = img[0]
+        with lock:
+            images = doc[pno].get_images(full=True)  # (xref, smask, width, height, ...)
+        for xref, _smask, width, height, *_ in images:
             if xref in seen:
                 continue
             seen.add(xref)
-            data = doc.extract_image(xref)
+            if width * height > MAX_IMAGE_PIXELS:
+                log.warning("embedded image %d (%dx%d) skipped: too big", xref, width, height)
+                continue
+            with lock:
+                data = doc.extract_image(xref)
             if not data or not data.get("image"):
                 continue
             path = free_path(os.path.join(out_dir, f"{base}_p{pno + 1}_{xref}.{data.get('ext', 'png')}"))
@@ -809,15 +881,20 @@ def extract_embedded_images(doc, pages, out_dir, base, progress: Progress = None
     return written
 
 
-def compress_to(doc: pymupdf.Document, out_path: str, *, image_dpi: int = 150, quality: int = 75,
-                protection: dict | None = None, progress: Progress = None) -> tuple[int, int]:
+def compress_to(doc: pymupdf.Document | bytes, out_path: str, *, image_dpi: int = 150, quality: int = 75,
+                protection: dict | None = None, progress: Progress = None, lock=_NO_LOCK) -> tuple[int, int]:
     """Write a smaller copy: downsample big images, subset fonts, deflate everything.
 
     Returns the sizes before and after. The session document is not modified. The image pass is one
     MuPDF call, which big scans keep busy for minutes: it runs in a process of its own, so a cancel
-    (``progress`` returning False) stops it too, like the steps before and after it.
+    (``progress`` returning False) stops it too, like the steps before and after it. ``doc`` may be the
+    document's bytes already; ``lock`` is held only for the steps in this process (see export_text).
     """
-    data = smaller = doc.tobytes()
+    if isinstance(doc, bytes):
+        data = smaller = doc
+    else:
+        with lock:
+            data = smaller = doc.tobytes()
     _tick(progress, 0, 2)
     if image_dpi:
         try:  # in memory both ways: a protected document is not written to disk unprotected
@@ -825,12 +902,13 @@ def compress_to(doc: pymupdf.Document, out_path: str, *, image_dpi: int = 150, q
                                   None if progress is None else lambda _done, _total: progress(0, 2), "the image pass")
         except RuntimeError:  # shortcut: keep going with lossless savings only
             log.warning("compress: the image pass failed", exc_info=True)
-    tmp = pymupdf.open("pdf", smaller)
-    try:
-        _tick(progress, 1, 2)
-        save_pdf(tmp, out_path, compress=True, subset_fonts=True, **protection_args(protection))
-    finally:
-        tmp.close()
+    _tick(progress, 1, 2)
+    with lock:
+        tmp = pymupdf.open("pdf", smaller)
+        try:
+            save_pdf(tmp, out_path, compress=True, subset_fonts=True, **protection_args(protection))
+        finally:
+            tmp.close()
     return len(data), os.path.getsize(out_path)
 
 

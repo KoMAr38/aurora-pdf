@@ -581,7 +581,7 @@
       check("sNight", "nightMode", "nightHint", S.night) +
       field("defaultFit", seg("sFit", [["width", "fitWidth"], ["page", "fitPage"]], st.fit || "width")) +
       section("aboutT", `<p class="hint">${A.esc(A.t("aboutText"))}</p><p class="hint" id="sAuthorLine">${A.esc(A.t("aboutAuthor"))}</p>
-        <div class="kv"><span class="k">${A.esc(A.t("version"))}</span><span class="v">2.0.0</span></div>
+        <div class="kv"><span class="k">${A.esc(A.t("version"))}</span><span class="v">${A.esc(S.version)}</span></div>
         <div class="linkrow"><button class="lnk" id="sKeys">${A.icon("keyboard", 14)}${A.esc(A.t("shortcuts"))}</button>
         <button class="lnk" data-url="${SOURCE}">${A.esc(A.t("sourceCode"))}</button>
         <button class="lnk" data-url="${SOURCE}/blob/main/LICENSE">${A.esc(A.t("licenseLnk"))}</button>
@@ -596,6 +596,7 @@
     root.querySelectorAll("[data-url]").forEach((b) => { b.onclick = () => A.call("open_url", { url: b.dataset.url }, { noBusy: true }); });
   };
 
+  let panelT = 0;
   A.on("doc", ({ prev, doc }) => {
     markRail();
     if (!S.panel) return;
@@ -603,8 +604,8 @@
     const reopened = !prev || !doc || prev.id !== doc.id;
     const structural = prev && doc && (prev.protected !== doc.protected || prev.owner !== doc.owner || prev.forms !== doc.forms || prev.signed !== doc.signed || prev.scanned !== doc.scanned);
     if (reopened || structural || S.panel === "annotate") {
-      clearTimeout(A._panelT); // the comments list alone is read again, so it keeps its place
-      A._panelT = setTimeout(reopened || structural ? render : () => loadComments(A.$("#panelInner")), S.panel === "annotate" ? 250 : 0);
+      clearTimeout(panelT); // the comments list alone is read again, so it keeps its place
+      panelT = setTimeout(reopened || structural ? render : () => loadComments(A.$("#panelInner")), S.panel === "annotate" ? 250 : 0);
     }
   });
 })(window.Aurora);

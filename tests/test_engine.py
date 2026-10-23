@@ -3,11 +3,13 @@
 Rotated pages are checked in display space (what the user sees), because that is where
 the v1 engine went wrong. Run: python -m pytest tests
 """
+import math
 import os
 import re
 import time
 
 import pymupdf
+
 import pytest
 
 from conftest import line_angles, make_doc, png_bytes, save_tmp, words_display
@@ -101,33 +103,57 @@ def test_open_image_converts_to_pdf(tmp_path):
 # --- watermark / header-footer upright on rotated pages ----------------------------------
 
 
+def drawn_points(page):
+    """Every path point the page draws, in display space (a text watermark is drawn, not written)."""
+    pts = []
+    for d in page.get_drawings():
+        for item in d["items"]:
+            pts += [pymupdf.Point(v) * page.rotation_matrix for v in item[1:] if isinstance(v, pymupdf.Point)]
+    return pts
+
+
+def axis_angle(pts):
+    """Visual angle (degrees, counter-clockwise on screen) of the long axis of a cloud of points."""
+    n = len(pts)
+    mx, my = sum(p.x for p in pts) / n, sum(p.y for p in pts) / n
+    sxx = sum((p.x - mx) ** 2 for p in pts)
+    syy = sum((p.y - my) ** 2 for p in pts)
+    sxy = sum((p.x - mx) * (p.y - my) for p in pts)
+    return round(-math.degrees(0.5 * math.atan2(2 * sxy, sxx - syy))) % 180
+
+
 @pytest.mark.parametrize("rot", ROTATIONS)
 def test_watermark_text_upright_and_centered(rot):
     doc = make_doc(1, rotation=rot)
     page = doc[0]
     pt.watermark_text(doc, "POVERLJIVO Đ", rotate=0, fontsize=40, opacity=0.3)
-    hits = [(r, t) for r, t in words_display(page) if t == "POVERLJIVO"]
-    assert hits, "watermark text missing"
-    r = hits[0][0]
-    assert r.width > r.height, "watermark should read horizontally on screen"
-    cx = page.rect.width / 2
-    assert r.x0 < cx < r.x1 + 40  # the two words straddle the centre
-    assert abs((r.y0 + r.y1) / 2 - page.rect.height / 2) < 30
+    box = pymupdf.Rect(drawn_points(page)[0], drawn_points(page)[0])
+    for q in drawn_points(page):
+        box |= q
+    assert box.width > box.height * 4, "watermark should read horizontally on screen"
+    assert abs((box.x0 + box.x1) / 2 - page.rect.width / 2) < 10
+    assert abs((box.y0 + box.y1) / 2 - page.rect.height / 2) < 30
 
 
 @pytest.mark.parametrize("rot", ROTATIONS)
 def test_watermark_angle_is_visual(rot):
     doc = make_doc(1, rotation=rot)
-    pt.watermark_text(doc, "DRAFT", rotate=45, fontsize=40)
-    angles = line_angles(doc[0])
-    assert 45 in angles, angles
+    pt.watermark_text(doc, "DRAFT COPY", rotate=45, fontsize=40)
+    assert abs(axis_angle(drawn_points(doc[0])) - 45) <= 3
 
 
-def test_watermark_tile_and_unicode():
+def test_watermark_cannot_be_selected_or_copied(tmp_path):
+    """A watermark on a document locked against changes and copying must not come out as text in any reader."""
     doc = make_doc(1)
-    pt.watermark_text(doc, "Ђорђе čćđ", tile=True, fontsize=24)
-    text = doc[0].get_text()
-    assert text.count("Ђорђе") >= 3 and "čćđ" in text
+    pt.watermark_text(doc, "Ђорђе POVERLJIVO čćđ", tile=True, fontsize=24)
+    path = tmp_path / "locked.pdf"
+    doc.save(path, encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="vlasnik", user_pw="",
+             permissions=pymupdf.PDF_PERM_PRINT)
+    again = pymupdf.open(path)
+    text = again[0].get_text()
+    assert "POVERLJIVO" not in text and "Ђорђе" not in text and "čćđ" not in text
+    assert "Aurora sample page 1" in text  # the page's own text is untouched
+    assert len(drawn_points(again[0])) > 200  # tiled: drawn several times
 
 
 @pytest.mark.parametrize("rot", ROTATIONS)
@@ -2424,3 +2450,73 @@ def test_doc_annots_lists_pages():
     an.add_note(doc[1], (100, 100), "druga")
     items = an.doc_annots(doc)
     assert len(items) == 1 and items[0]["p"] == 1 and items[0]["txt"] == "druga"
+
+
+# --- fixes from the October audit -----------------------------------------------------
+
+
+def test_hexcolor_reads_gray_and_cmyk():
+    from core.geom import hexcolor
+    assert hexcolor([0.5]) == "#808080"
+    assert hexcolor([0, 1, 1, 0]) == "#ff0000"
+    assert hexcolor([0, 0, 0, 1]) == "#000000"
+    assert hexcolor([1, 0, 0]) == "#ff0000"
+
+
+def test_redaction_by_search_takes_words_written_with_ligatures():
+    font = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if not os.path.exists(font):
+        pytest.skip("DejaVuSans not installed")
+    doc = pymupdf.open()
+    doc.new_page().insert_text((50, 100), "Contact: Raﬁq Suﬃx office", fontfile=font, fontname="dj", fontsize=14)
+    assert an.mark_redaction_text(doc, "Rafiq") == 1 and an.mark_redaction_text(doc, "Suffix") == 1
+    an.apply_redactions(doc)
+    text = doc[0].get_text()
+    assert "office" in text and "Ra" not in text and "Su" not in text
+
+
+def test_redaction_by_search_takes_the_words_out_of_bookmarks(tmp_path):
+    doc = make_doc(2)
+    doc.set_toc([[1, "Notes on marker-1", 1], [2, "more MARKER-1 here", 2], [1, "Other", 2]])
+    assert an.mark_redaction_text(doc, "marker-1")
+    an.apply_redactions(doc)
+    assert doc.get_toc() == [[1, "Notes on █", 1], [2, "more █ here", 2], [1, "Other", 2]]
+    path = str(tmp_path / "r.pdf")
+    pt.save_pdf(doc, path)
+    saved = pymupdf.open(path)
+    assert saved.get_toc() == doc.get_toc()
+    assert not any("marker-1" in saved.xref_object(x).lower() for x in range(1, saved.xref_length()))
+
+
+def test_moving_or_editing_a_comment_keeps_the_drawing_another_program_made():
+    doc = make_doc(1)
+    page = doc[0]
+    stamp = page.add_stamp_annot(pymupdf.Rect(100, 100, 220, 150), stamp=0)
+    stamp.set_info(title="Acrobat")
+    ap = int(doc.xref_get_key(stamp.xref, "AP/N")[1].split()[0])
+    drawing = b"0 1 0 rg 0 0 5 5 re f"
+    doc.update_stream(ap, drawing)
+    rect = pymupdf.Rect(page.load_annot(stamp.xref).rect)
+    an.move_annot(page, stamp.xref, 10, 0)
+    an.edit_annot(page, stamp.xref, author="Marko")
+    a = page.load_annot(stamp.xref)
+    assert doc.xref_stream(int(doc.xref_get_key(a.xref, "AP/N")[1].split()[0])) == drawing
+    assert abs(a.rect.x0 - rect.x0 - 10) < 0.01 and a.info["title"] == "Marko"
+    box = page.add_freetext_annot(pymupdf.Rect(100, 300, 300, 340), "Hi", fontname="Cour", fontsize=11)
+    doc.xref_set_key(box.xref, "DA", "(/Arial 11 Tf 0 g)")  # a font of another program's AcroForm
+    an.move_annot(page, box.xref, 0, 10)
+    an.edit_annot(page, box.xref, author="Marko")
+    assert doc.xref_get_key(box.xref, "DA")[1] == "/Arial 11 Tf 0 g"
+
+
+def test_redaction_reads_a_comment_between_a_key_and_its_value():
+    """<</ActualText %c\n(...)>>: the comment taken for the value commented out the rest of the page MuPDF writes on
+    one line, and the page lost all its text."""
+    doc = make_doc(1)
+    page = doc[0]
+    x = page.get_contents()[0]
+    doc.update_stream(x, b"/P <</MCID 0 /ActualText %c\n(Said again)>> BDC\n" + doc.xref_stream(x) + b"\nEMC")
+    page.add_redact_annot(page.search_for("marker-1")[0])
+    an.apply_redactions(doc)
+    text = doc[0].get_text()
+    assert "Said again" in text and "lorem ipsum dolor" in text and "marker-1" not in text

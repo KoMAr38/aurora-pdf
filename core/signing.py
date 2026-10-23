@@ -18,7 +18,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from .paths import data_dir
+from .paths import data_dir, write_atomic
 
 IDS_SUBDIR = "ids"
 
@@ -315,16 +315,7 @@ def sign_pdf(
         pdf_signer = signers.PdfSigner(meta, signer=signer, stamp_style=style or stamp.TextStampStyle(stamp_text="%(signer)s\n%(ts)s", border_width=1))
         out = io.BytesIO()
         pdf_signer.sign_pdf(writer, output=out)
-        tmp_out = out_path + ".aurora-tmp"
-        try:
-            with open(tmp_out, "wb") as f:
-                f.write(out.getvalue())
-            os.replace(tmp_out, out_path)
-        finally:
-            try:
-                os.remove(tmp_out)  # left only when the target is locked (open in another program)
-            except OSError:
-                pass
+        write_atomic(out_path, out.getvalue())
         return field_name
     finally:
         if tmp_ap:

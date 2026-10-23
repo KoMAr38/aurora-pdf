@@ -479,8 +479,8 @@ def test_watermark_header_redaction(api, tmp_path):
     opened(api, tmp_path, rot=90)
     ok(call(api, "watermark_text", text="TAJNO", pages="1-2", angle=30, size=40, opacity=0.2))
     ok(call(api, "header_footer", text="{n}/{total}", position="bc"))
-    assert "TAJNO" in call(api, "page_text", page=0)["text"]
-    assert "TAJNO" not in call(api, "page_text", page=2)["text"]
+    assert api.s.doc[0].get_drawings() and not api.s.doc[2].get_drawings()  # drawn on pages 1-2 only
+    assert "TAJNO" not in call(api, "page_text", page=0)["text"]  # drawn, so never selectable text
     d = ok(call(api, "redact_search", query="lorem"))
     assert d["count"] == 3 and call(api, "redact_count")["count"] == 3
     assert ok(call(api, "redact_apply"))["count"] == 3
@@ -1115,10 +1115,12 @@ def test_settings_changed_from_two_threads_keep_both_changes(tmp_path, monkeypat
 @pytest.mark.parametrize("langid, lang", [(0x0414, "no"), (0x0814, "no"), (0x241A, "sr"), (0x081A, "sr"),
                                           (0x041A, "sr"), (0x141A, "sr"), (0x0409, "en"), (0x0407, "de"),
                                           (0x0C07, "de"), (0x0416, "pt-BR"), (0x0816, "pt"), (0x0411, "ja"),
-                                          (0x0422, "uk"), (0x042F, "mk"), (0x0412, "en")])
+                                          (0x0422, "uk"), (0x042F, "mk"), (0x0412, "en"),
+                                          (0x0804, "zh-CN"), (0x0404, "en")])
 def test_a_first_start_speaks_the_language_of_windows(langid, lang):
-    """Norwegian, Serbian/Croatian/Bosnian, German (also Austrian), both Portuguese, Japanese, Ukrainian and
-    Macedonian Windows get their own language; Korean, which the program does not have, gets English."""
+    """Norwegian, Serbian/Croatian/Bosnian, German (also Austrian), both Portuguese, Japanese, Ukrainian,
+    Macedonian and simplified Chinese Windows get their own language; Korean and traditional Chinese, which the
+    program does not have, get English."""
     from core import settings
 
     assert settings.lang_for(langid) == lang
@@ -1126,7 +1128,8 @@ def test_a_first_start_speaks_the_language_of_windows(langid, lang):
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows asks the system, not LANG")
 @pytest.mark.parametrize("tag, lang", [("nb_NO.UTF-8", "no"), ("sr_RS@latin", "sr"), ("de_DE.UTF-8", "de"), ("pt_BR.UTF-8", "pt-BR"),
-                                       ("pt_PT.UTF-8", "pt"), ("ko_KR.UTF-8", "en"), ("", "en")])
+                                       ("pt_PT.UTF-8", "pt"), ("zh_CN.UTF-8", "zh-CN"), ("zh_TW.UTF-8", "en"),
+                                       ("ko_KR.UTF-8", "en"), ("", "en")])
 def test_elsewhere_the_first_language_comes_from_lang(tag, lang, monkeypatch):
     from core import settings
 
@@ -1240,3 +1243,239 @@ def test_selftest_passes(tmp_path, monkeypatch):
     monkeypatch.setattr(pdftools, "_in_process", no_process)
     with pytest.raises(RuntimeError, match="image pass did not run"):
         selftest.check_compress(tmp_path)
+
+
+# --- writes, jobs and hostile files (audit B) ----------------------------------------------
+
+
+def test_a_write_that_fails_halfway_leaves_the_old_file_and_no_temp_file(api, tmp_path, monkeypatch):
+    """Disk full or a crash during a save, a merge or an extract: the file that was there stays as it was."""
+    _, path = opened(api, tmp_path)
+    other = save_tmp(make_doc(1), tmp_path, "b.pdf")
+    target = save_tmp(make_doc(2), tmp_path, "c.pdf")
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+
+    real = pymupdf.Document.save
+
+    def half(self, filename, *args, **kw):  # into a file only: tobytes() saves into memory
+        if not isinstance(filename, (str, os.PathLike)):
+            return real(self, filename, *args, **kw)
+        with open(filename, "wb") as f:
+            f.write(b"%PDF-1.7 half a file")
+        raise OSError("disk full")
+
+    ok(call(api, "rotate", pages=[0]))
+    monkeypatch.setattr(pymupdf.Document, "save", half)
+    assert not call(api, "save")["ok"]
+    answers(api, target)
+    assert not call(api, "merge_run", paths=[other, other])["ok"]
+    answers(api, target)
+    assert not call(api, "extract_dialog", pages="1")["ok"]
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+def test_the_word_export_leaves_no_readable_copy_in_the_temp_folder(api, tmp_path, monkeypatch):
+    """pdf2docx reads a file: the snapshot of a protected document must not lie there without its password."""
+    path = str(tmp_path / "p.pdf")
+    make_doc(2).save(path, encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="u", owner_pw="o")
+    ok(call(api, "open_path", path=path, password="o"))
+    seen = {}
+
+    def convert(pdf, out, progress=None, password=None):
+        doc = pymupdf.open(pdf)
+        seen.update(locked=doc.needs_pass, opens=bool(doc.authenticate(password or "")), pages=len(doc))
+        doc.close()
+
+    monkeypatch.setattr(pt, "export_docx", convert)
+    answers(api, str(tmp_path / "w.docx"))
+    assert wait_job(api, ok(call(api, "export_start", kind="docx"))["job"])["state"] == "done"
+    assert seen == {"locked": True, "opens": True, "pages": 2}
+
+
+def test_an_export_holds_the_lock_only_page_by_page_and_works_on_a_snapshot(api, tmp_path, monkeypatch):
+    """Pages keep loading while images are written, and deleting pages meanwhile does not shift the export."""
+    import threading
+
+    opened(api, tmp_path)
+    folder = tmp_path / "imgs"
+    folder.mkdir()
+    real, go, waiting = pt.encode_jpeg, threading.Event(), threading.Event()
+
+    def slow(pix, quality=88):
+        waiting.set()
+        go.wait(10)
+        return real(pix, quality)
+
+    monkeypatch.setattr(pt, "encode_jpeg", slow)
+    answers(api, str(folder))
+    job = ok(call(api, "export_start", kind="images", format="jpg", dpi=5000))["job"]  # dpi is kept to 600
+    assert waiting.wait(10)
+    assert api.s.lock.acquire(timeout=2)  # free while the export writes a page
+    api.s.lock.release()
+    ok(call(api, "delete_pages", pages=[0, 1]))  # and the export has its own copy
+    go.set()
+    st = wait_job(api, job)
+    assert st["state"] == "done" and st["result"]["count"] == 3
+    names = sorted(p.name for p in folder.iterdir())
+    assert names == ["doc_1.jpg", "doc_2.jpg", "doc_3.jpg"]
+    from PIL import Image
+
+    assert Image.open(folder / "doc_1.jpg").width <= 420 * 600 / 72 + 1
+
+
+def test_an_ocr_holds_its_slot_from_the_start(api, tmp_path, monkeypatch):
+    """Between ocr_start and its thread nothing may move the pages it was given; a document changed anyway
+    (STALE) is not recognised, and the slot is free again."""
+    opened(api, tmp_path)
+    started = []
+
+    class Job:
+        def progress(self, done, total):
+            return True
+
+    monkeypatch.setattr(api._jobs, "start", lambda kind, fn: started.append(fn) or "j1")
+    monkeypatch.setattr(ocr, "ocr_page", lambda page, langs, dpi: 0)
+    ok(call(api, "ocr_start", pages="1", force=True))
+    assert call(api, "rotate", pages=[0])["error"] == "BUSY"
+    assert call(api, "open_path", path=save_tmp(make_doc(1), tmp_path, "x.pdf"))["error"] == "BUSY"
+    assert started[0](Job()) == {"pages": 0, "words": 0}
+    assert api.s.job is None
+    ok(call(api, "ocr_start", pages="1", force=True))
+    api.s.mark_changed()  # what the slot cannot hold off: the run sees it
+    with pytest.raises(Exception, match="STALE"):
+        started[1](Job())
+    assert api.s.job is None and ok(call(api, "rotate", pages=[0]))
+
+
+def test_an_undo_step_that_cannot_be_read_keeps_the_history(api, tmp_path, monkeypatch):
+    """A damaged step on disk (InvalidTag, OSError) fails the undo, and leaves undo and redo as they were;
+    an edit that cannot roll back keeps its half-done change, unsaved."""
+    from core import session as sess
+
+    res, _ = opened(api, tmp_path)
+    ok(call(api, "rotate", pages=[0], degrees=90))
+    revs = list(api.s.revs)
+
+    def damaged(self):
+        raise OSError("undo step damaged")
+
+    monkeypatch.setattr(sess.Snapshot, "data", property(damaged))
+    assert not call(api, "undo")["ok"]
+    assert len(api.s.undo_stack) == 1 and not api.s.redo_stack and api.s.revs == revs
+    real = pt.rotate_pages
+
+    def half(doc, pages, degrees):
+        real(doc, pages, degrees)
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(pt, "rotate_pages", half)
+    api.s.saved_state = api.s.state
+    assert call(api, "rotate", pages=[1], degrees=90)["error"] == "ERROR"
+    assert api.s.dirty and api.s.revs[1] != revs[1]
+    monkeypatch.undo()
+    d = ok(call(api, "undo"))["doc"]
+    assert api.s.doc[0].rotation == 0 and d["redo"] == "rotate"
+
+
+def test_damaged_settings_are_set_aside_and_saves_never_share_a_temp_file(tmp_path, monkeypatch):
+    """A damaged settings.json is kept (settings.bad.json), not overwritten by defaults; a save writes through a
+    temp file of a name of its own, so two app processes cannot write into the same one (settings.tmp)."""
+    from core import settings
+
+    monkeypatch.setenv("AURORA_DATA_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text('{"author": "Ana", ', encoding="utf-8")
+    assert settings.load()["lang"]  # the defaults
+    assert (tmp_path / "settings.bad.json").read_text(encoding="utf-8") == '{"author": "Ana", '
+    (tmp_path / "settings.tmp").mkdir()  # the fixed name a second process would have in use
+    settings.update(author="Bo")
+    assert settings.load()["author"] == "Bo"
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["settings.bad.json", "settings.json"]
+
+
+def test_a_page_range_past_the_end_is_refused():
+    assert pt.parse_page_range("8-", 10) == [7, 8, 9] and pt.parse_page_range("2-99999", 3) == [1, 2]
+    for spec in ("3,50", "11", "50-60"):
+        with pytest.raises(ValueError):
+            pt.parse_page_range(spec, 10)
+
+
+def test_new_protection_never_uses_rc4_but_an_rc4_file_keeps_it(api, tmp_path):
+    path = str(tmp_path / "old.pdf")
+    make_doc(1).save(path, encryption=pymupdf.PDF_ENCRYPT_RC4_128, user_pw="pw", owner_pw="pw")
+    assert ok(call(api, "open_path", path=path, password="pw"))["doc"]["algorithm"] == "rc4"
+    ok(call(api, "rotate", pages=[0]))
+    ok(call(api, "save"))
+    assert pt._algorithm(pt._encrypt_dict(pymupdf.open(path))) == "rc4"
+    out = str(tmp_path / "new.pdf")
+    answers(api, out)
+    ok(call(api, "save_protected", user_pw="a", owner_pw="b", algorithm="rc4"))
+    assert pt._algorithm(pt._encrypt_dict(pymupdf.open(out))) == "aes256"
+
+
+def test_the_server_survives_bad_numbers_and_bodies(tmp_path):
+    import http.client
+
+    session = Session()
+    srv = AppServer(Api(session, Dialogs()), session, WEB_DIR).start()
+    try:
+        def ask(method, path, body=b"", headers=None):
+            conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
+            conn.putrequest(method, f"/{srv.token}/{path}", skip_accept_encoding=True)
+            for k, v in (headers or {}).items():
+                conn.putheader(k, v)
+            conn.endheaders(body)
+            r = conn.getresponse()
+            return conn, r, r.read()
+
+        assert ask("GET", "print?w=abc&revs=1")[1].status == 200
+        assert ask("GET", "page/" + "9" * 5000 + "/600.jpg")[1].status == 404
+        assert ask("GET", "info/" + "9" * 5000 + ".json")[1].status == 404
+        json_ = {"Content-Type": "application/json"}
+        for length in ("x", "-1", ""):
+            conn, r, _ = ask("POST", "api/state", b"{}", {**json_, **({"Content-Length": length} if length else {})})
+            assert r.status == 400 and r.getheader("Connection") == "close"
+            conn.close()
+        conn, r, _ = ask("POST", "api/state", b"", {**json_, "Content-Length": str(10 ** 9)})
+        assert r.status == 413 and r.getheader("Connection") == "close"
+        conn, r, _ = ask("POST", "api/state", b"{}", {"Content-Type": "text/plain", "Content-Length": "2"})
+        assert r.status == 415 and r.getheader("Connection") == "close"
+    finally:
+        srv.stop()
+
+
+def test_the_version_is_the_one_of_the_store_package(api):
+    """paths.VERSION is what the log and the Settings panel show; the manifest is what the Store sells."""
+    from core.paths import VERSION
+
+    manifest = (WEB_DIR.parent / "packaging" / "AppxManifest.xml").read_text(encoding="utf-8")
+    store = re.search(r'<Identity\b[^>]*\bVersion="([\d.]+)"', manifest, re.S).group(1)
+    assert store == VERSION + ".0"
+    assert call(api, "state")["version"] == VERSION  # the Settings panel shows this one
+
+
+def test_a_giant_page_and_a_huge_image_stay_within_bounds(api, tmp_path, monkeypatch):
+    """A 200000-point page draws a small thumbnail, recognises and exports within MAX_RENDER_PIXELS; an image
+    bigger than MAX_IMAGE_PIXELS (a deflate bomb) is not decoded for saving."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=200, height=200)
+    page.insert_image(page.rect, stream=png_bytes(64, 64))
+    page = doc.new_page()
+    doc.xref_set_key(page.xref, "MediaBox", "[0 0 200000 200000]")
+    path = save_tmp(doc, tmp_path, "giant.pdf")
+    ok(call(api, "open_path", path=path))
+    with api.s.lock:
+        assert pt.render_pixmap(api.s.doc[1], 120).width <= 121
+    folder = tmp_path / "imgs"
+    folder.mkdir()
+    answers(api, str(folder))
+    st = wait_job(api, ok(call(api, "export_start", kind="images", pages="2", dpi=600))["job"], timeout=60)
+    from PIL import Image
+
+    img = Image.open(next(folder.iterdir()))
+    assert st["state"] == "done" and img.width * img.height <= pt.MAX_RENDER_PIXELS
+    monkeypatch.setattr(pt, "MAX_IMAGE_PIXELS", 64 * 64 - 1)
+    emb = tmp_path / "emb"
+    emb.mkdir()
+    answers(api, str(emb))
+    st = wait_job(api, ok(call(api, "export_start", kind="embedded", pages="1"))["job"])
+    assert st["state"] == "done" and st["result"]["count"] == 0

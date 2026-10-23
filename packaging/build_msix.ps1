@@ -29,7 +29,7 @@ function Invoke-Tool($exe, [string[]]$arguments) {
 
 # 1. the program as a folder of files, the same way 3_BYGG_EXE.bat makes it
 python -m PyInstaller --noconfirm --clean --windowed --name AuroraPDF --icon 'web\assets\aurora.ico' `
-    --add-data 'web;web' --add-data 'resources;resources' main.py
+    --add-data 'web;web' --add-data 'resources;resources' --collect-submodules fontTools.ttLib.tables main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 
 # 2. the package layout: program, licence texts, manifest, icons

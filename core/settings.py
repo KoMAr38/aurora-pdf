@@ -16,7 +16,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .paths import data_dir
+from .paths import data_dir, write_atomic
 
 _LOCK = threading.RLock()  # requests run on several threads: each read-change-write happens as one
 MAX_RECENT = 12
@@ -51,6 +51,8 @@ def lang_for(langid: int) -> str:
     """UI language for a Windows LANGID, English when the program does not have it."""
     if langid == 0x0416:
         return "pt-BR"
+    if langid in (0x0804, 0x1004):  # Chinese in China and Singapore; the traditional script gets English
+        return "zh-CN"
     return PRIMARY.get(langid & 0x3FF, "en")
 
 
@@ -62,6 +64,8 @@ def system_lang() -> str:
     tag = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
     if tag.startswith("pt_BR"):
         return "pt-BR"
+    if tag.startswith(("zh_CN", "zh_SG")):
+        return "zh-CN"
     code = ALIASES.get(tag[:2].lower(), tag[:2].lower())
     return code if code in PRIMARY.values() else "en"
 
@@ -69,13 +73,15 @@ def system_lang() -> str:
 def load() -> dict:
     data = dict(DEFAULTS)
     stored = None
-    try:
-        with _LOCK:  # Windows cannot replace the file (save) while another thread has it open for reading
+    with _LOCK:  # Windows cannot replace the file (save) while another thread has it open for reading
+        try:
             stored = json.loads(_file().read_text(encoding="utf-8"))
-        if isinstance(stored, dict):
-            data.update({k: v for k, v in stored.items() if k in DEFAULTS})
-    except (OSError, ValueError):
-        pass
+        except OSError:
+            pass
+        except ValueError:  # damaged: set aside where it can still be read, not overwritten by the next save
+            _set_aside(_file())
+    if isinstance(stored, dict):
+        data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     if not isinstance(stored, dict) or "lang" not in stored:
         data["lang"] = system_lang()
     if not data["author"]:
@@ -86,14 +92,23 @@ def load() -> dict:
     return data
 
 
+def _set_aside(path: Path) -> None:
+    bad, k = path.with_name("settings.bad.json"), 1
+    while bad.exists():
+        k += 1
+        bad = path.with_name(f"settings.bad{k}.json")
+    try:
+        os.replace(path, bad)
+    except OSError:
+        logging.getLogger("aurora").warning("could not set the damaged settings aside", exc_info=True)
+
+
 def save(data: dict) -> None:
     """Remembering is a convenience: a file another program holds (backup, antivirus) must not turn the open,
     save or signing that asked for it into an error."""
     with _LOCK:
         try:
-            tmp = _file().with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, _file())
+            write_atomic(_file(), json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"))
         except OSError:
             logging.getLogger("aurora").warning("could not write the settings", exc_info=True)
 

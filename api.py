@@ -23,6 +23,7 @@ from core import annots as an
 from core import ocr, settings, signing
 from core import pdftools as pt
 from core.geom import size_unit
+from core.paths import VERSION
 from core.jobs import Jobs
 from core.session import Session, SessionError
 
@@ -257,6 +258,7 @@ class Api:
             "recent": settings.recent(),
             "ocrLangs": ocr.available_languages(),
             "jobs": self._jobs.running(),
+            "version": VERSION,
         }
 
     @rpc
@@ -388,33 +390,29 @@ class Api:
         allowed = a.get("allowed")
         perms = pt.permissions_int(allowed if allowed is not None else pt.ALL_PERMS)
         return {"user_pw": user_pw, "owner_pw": owner_pw, "perms": perms,
-                "algorithm": a.get("algorithm") if a.get("algorithm") in pt.ENCRYPTION else "aes256"}
+                # RC4 is broken: only kept when a file that has it is saved again, never chosen for new protection
+                "algorithm": a.get("algorithm") if a.get("algorithm") in ("aes256", "aes128") else "aes256"}
 
     @rpc
     def save_protected(self, a):
+        return self._save_with(a, "protected", self._protection_from)
+
+    @rpc
+    def save_unprotected(self, a):
+        return self._save_with(a, "unprotected", lambda a: None)
+
+    def _save_with(self, a: dict, suffix_key: str, protection) -> dict:
+        """A copy with new protection (``protection(a)``, None for none); picking the open file changes that one."""
         self.s.require()
         if self.s.protection and not self.s.info.get("owner"):
             raise SessionError("NOT_ALLOWED")  # only the owner may change the protection
-        prot = self._protection_from(a)
-        out = self._dialogs.save(self._default_name("protected"), PDF_TYPES, self._dir())
+        prot = protection(a)
+        out = self._dialogs.save(self._default_name(suffix_key), PDF_TYPES, self._dir())
         if not out:
             return {"ok": False, "error": "CANCELLED"}
         if self._is_open(out):
             return self._protect_open_file(prot)
         self.s.write(out, protection=prot)
-        return self._doc(path=out)
-
-    @rpc
-    def save_unprotected(self, a):
-        self.s.require()
-        if self.s.protection and not self.s.info.get("owner"):
-            raise SessionError("NOT_ALLOWED")
-        out = self._dialogs.save(self._default_name("unprotected"), PDF_TYPES, self._dir())
-        if not out:
-            return {"ok": False, "error": "CANCELLED"}
-        if self._is_open(out):
-            return self._protect_open_file(None)
-        self.s.write(out, protection=None)
         return self._doc(path=out)
 
     def _protect_open_file(self, protection: dict | None) -> dict:
@@ -787,7 +785,7 @@ class Api:
     @rpc
     def flatten(self, a):
         with self.s.edit("flatten"):
-            an.flatten(self.s.doc, annots=bool(a.get("annots")))
+            an.flatten(self.s.doc)
         return self._doc()
 
     # --- text, search, outline, attachments, info ------------------------------------------
@@ -882,18 +880,16 @@ class Api:
 
     @rpc
     def ocr_start(self, a):
-        doc = self.s.require("modify")
-        if self.s.job:
-            raise SessionError("BUSY")
         langs = "+".join(code for code in str(a.get("langs", "eng")).split("+") if code in ocr.LANGUAGES) or "eng"
-        with self.s.lock:
+        dpi = max(72, min(int(a.get("dpi", 300)), 600))
+        with self.s.lock:  # the pages and the job slot in one step: nothing moves the pages before the job runs
+            doc = self.s.require("modify")
             pages = self._pages(a.get("pages"))
             if not a.get("force"):
                 pages = [p for p in pages if not ocr.page_has_text(doc[p])]
-        if not pages:
-            raise SessionError("NOTHING_TO_OCR")
-        dpi = int(a.get("dpi", 300))
-        settings.update(ocr_langs=langs)
+            if not pages:
+                raise SessionError("NOTHING_TO_OCR")
+            reserved = self.s.reserve_job("ocr")
 
         def work(job):
             words = 0
@@ -904,12 +900,17 @@ class Api:
                 words += n
                 return n > 0
 
-            touched = self.s.run_pages("ocr", pages, one, progress=job.progress)
+            touched = self.s.run_pages("ocr", pages, one, progress=job.progress, reserved=reserved)
             with self.s.lock:
                 self.s.scanned = ocr.looks_scanned(self.s.doc)
             return {"pages": len(touched), "words": words}
 
-        return {"ok": True, "job": self._jobs.start("ocr", work), "total": len(pages)}
+        try:
+            settings.update(ocr_langs=langs)
+            return {"ok": True, "job": self._jobs.start("ocr", work), "total": len(pages)}
+        except BaseException:
+            self.s.release_job("ocr")
+            raise
 
     @rpc
     def export_start(self, a):
@@ -919,7 +920,9 @@ class Api:
         base = os.path.splitext(self.s.name or "dokument")[0]
         if kind in ("txt", "docx", "images", "embedded") and not self.s.rights.get("copy"):
             raise SessionError("NOT_ALLOWED")  # all of them take the content out of the document
-        pages = self._pages(a.get("pages"))
+        with self.s.lock:
+            pages = self._pages(a.get("pages"))
+            seen = self.s.doc_id, self.s.state
         prot = self._copy_protection(a) if kind == "compress" else None
         if kind == "docx":
             out = self._dialogs.save(base + ".docx", DOCX_TYPES, self._dir())
@@ -933,39 +936,56 @@ class Api:
             raise SessionError("BAD_KIND")
         if not out:
             return {"ok": False, "error": "CANCELLED"}
+        dpi = max(72, min(int(a.get("dpi", 150)), 600))
+        # the export works on a snapshot taken now, so it holds the lock only page by page and the viewer goes on
+        # drawing; the pages were picked before the dialog, from the document as it was then
+        with self.s.lock:
+            if self.s.doc is None or (self.s.doc_id, self.s.state) != seen:
+                raise SessionError("STALE")
+            if kind == "compress":
+                snap = self.s.doc.tobytes()
+            elif kind == "docx":
+                snap = pt.copy_pages(self.s.doc, pages)
+            else:  # the whole document: pages keep their numbers and images their xrefs in the file names
+                snap = pymupdf.open("pdf", self.s.doc.tobytes())
 
         def work(job):
-            if kind == "docx":
-                # pdf2docx reads a file: a plain snapshot of the current state, made in a moment under the
-                # lock; the conversion runs in another process and leaves the document free meanwhile
-                import tempfile
+            lock = self.s.lock
+            try:
+                if kind == "docx":
+                    # pdf2docx reads a file: the snapshot goes to the temp folder under a password of its own, so
+                    # a protected document does not lie there readable; the conversion runs in another process
+                    import secrets
+                    import tempfile
 
-                fd, tmp = tempfile.mkstemp(suffix=".pdf")
-                os.close(fd)
-                try:
-                    with self.s.lock:
-                        sub = pt.copy_pages(self.s.doc, pages)
-                        sub.save(tmp)
-                        sub.close()
-                    pt.export_docx(tmp, out, progress=job.progress)
-                finally:
-                    os.remove(tmp)
-                return {"path": out}
-            with self.s.lock:
+                    pw = secrets.token_urlsafe(18)
+                    fd, tmp = tempfile.mkstemp(suffix=".pdf")
+                    os.close(fd)
+                    try:
+                        with lock:
+                            pt.save_pdf(snap, tmp, user_pw=pw, owner_pw=pw)
+                        pt.export_docx(tmp, out, progress=job.progress, password=pw)
+                    finally:
+                        os.remove(tmp)
+                    return {"path": out}
                 if kind == "txt":
-                    pt.export_text(self.s.doc, out, pages)
+                    pt.export_text(snap, out, pages, lock=lock)
                     return {"path": out}
                 if kind == "compress":
-                    before, size = pt.compress_to(self.s.doc, out, image_dpi=int(a.get("dpi", 150)),
+                    before, size = pt.compress_to(snap, out, image_dpi=int(a.get("dpi", 150)),
                                                   quality=int(a.get("quality", 75)), protection=prot,
-                                                  progress=job.progress)
+                                                  progress=job.progress, lock=lock)
                     return {"path": out, "before": before, "after": size}
                 if kind == "images":
-                    files = pt.export_page_images(self.s.doc, pages, out, base, a.get("format", "png"),
-                                                  int(a.get("dpi", 150)), progress=job.progress)
+                    files = pt.export_page_images(snap, pages, out, base, a.get("format", "png"), dpi,
+                                                  progress=job.progress, lock=lock)
                     return {"path": out, "count": len(files)}
-                files = pt.extract_embedded_images(self.s.doc, pages, out, base, progress=job.progress)
+                files = pt.extract_embedded_images(snap, pages, out, base, progress=job.progress, lock=lock)
                 return {"path": out, "count": len(files)}
+            finally:
+                if not isinstance(snap, bytes):
+                    with lock:
+                        snap.close()
 
         return {"ok": True, "job": self._jobs.start(f"export_{kind}", work)}
 

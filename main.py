@@ -17,12 +17,11 @@ import sys
 import threading
 
 from api import Api
-from core.paths import WEB_DIR, data_dir, resource
+from core.paths import VERSION, WEB_DIR, data_dir, resource
 from core.server import AppServer
 from core.session import Session
 
 APP_ID = "Aurora.PDF.Desktop"
-VERSION = "2.0.0"
 UNSAVED = {  # native fallback when the page cannot ask itself
     "sr": "Ima nesačuvanih izmena ili posao još traje. Zatvoriti svejedno?",
     "en": "There are unsaved changes, or a task is still running. Close anyway?",
@@ -44,6 +43,7 @@ UNSAVED = {  # native fallback when the page cannot ask itself
     "ro": "Există modificări nesalvate sau o activitate este încă în desfășurare. Închideți oricum?",
     "hu": "Nem mentett módosítások vannak, vagy egy feladat még fut. Bezárja mégis?",
     "tr": "Kaydedilmemiş değişiklikler var veya bir görev hâlâ çalışıyor. Yine de kapatılsın mı?",
+    "zh-CN": "有未保存的更改，或者仍有任务在运行。仍要关闭吗？",
     "ja": "未保存の変更があるか、タスクがまだ実行中です。閉じてもよろしいですか?",
 }
 

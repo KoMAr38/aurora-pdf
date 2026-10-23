@@ -10,7 +10,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 set "VPY=.venv\Scripts\python.exe"
 "%VPY%" -m pip install --disable-pip-version-check -q pyinstaller==6.22.3 || goto :fail
-"%VPY%" -m PyInstaller --noconfirm --clean --windowed --name "Aurora PDF" --icon "web\assets\aurora.ico" --add-data "web;web" --add-data "resources;resources" main.py || goto :fail
+"%VPY%" -m PyInstaller --noconfirm --clean --windowed --name "Aurora PDF" --icon "web\assets\aurora.ico" --add-data "web;web" --add-data "resources;resources" --collect-submodules fontTools.ttLib.tables main.py || goto :fail
 rem The licence texts go with the program: AGPL-3.0 and those of the parts it is made of
 copy /y LICENSE "dist\Aurora PDF\" >nul || goto :fail
 copy /y THIRD_PARTY_NOTICES.md "dist\Aurora PDF\" >nul || goto :fail

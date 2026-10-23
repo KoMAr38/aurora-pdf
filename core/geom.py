@@ -119,4 +119,9 @@ def rgb(color: str | Sequence[float] | None, default=(0, 0, 0)) -> tuple[float, 
 def hexcolor(c: Sequence[float] | None) -> str | None:
     if not c:
         return None
+    if len(c) == 1:  # gray
+        c = (c[0],) * 3
+    elif len(c) == 4:  # cmyk
+        k = c[3]
+        c = [(1 - v) * (1 - k) for v in c[:3]]
     return "#" + "".join(f"{max(0, min(255, round(v * 255))):02x}" for v in c[:3])

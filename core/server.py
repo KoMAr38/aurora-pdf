@@ -196,6 +196,10 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             self.close_connection = True
 
+    def _refuse(self, code: int) -> None:
+        self.close_connection = True
+        self._send(code, headers={"Connection": "close"})
+
     def _route(self) -> str | None:
         """Path after the token, or None when the request is not for us."""
         host = self.headers.get("Host", "")
@@ -212,12 +216,12 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(404)
         url = urlsplit(rest)
         path = unquote(url.path)
-        m = re.fullmatch(r"page/(\d+)/(\d+)\.jpg", path)
+        m = re.fullmatch(r"page/(\d{1,9})/(\d{1,9})\.jpg", path)
         if m:
             width = max(16, min(int(m.group(2)), 8000))
             data = self.app.page_jpeg(int(m.group(1)), width)
             return self._send(200, data, "image/jpeg", IMMUTABLE) if data else self._send(404)
-        m = re.fullmatch(r"info/(\d+)\.json", path)
+        m = re.fullmatch(r"info/(\d{1,9})\.json", path)
         if m:
             data = self.app.page_info(int(m.group(1)))
             return self._send(200, data, "application/json", IMMUTABLE) if data else self._send(404)
@@ -229,8 +233,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(404)
         if path == "print":
             q = parse_qs(url.query)
-            width = max(200, min(int((q.get("w") or ["1400"])[0]), 4000))
-            revs = [int(r) for r in (q.get("revs") or [""])[0].split(",") if r.isdigit()]
+            w = (q.get("w") or [""])[0]
+            width = max(200, min(int(w), 4000)) if re.fullmatch(r"\d{1,9}", w) else 1400
+            revs = [int(r) for r in (q.get("revs") or [""])[0].split(",") if re.fullmatch(r"\d{1,9}", r)]
             pages = "".join(f'<div class="p"><img src="page/{r}/{width}.jpg"></div>' for r in revs)
             return self._send(200, PRINT_HTML.replace("__PAGES__", pages).encode(), "text/html; charset=utf-8",
                               headers={"Content-Security-Policy": PRINT_CSP})
@@ -240,9 +245,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             target = (self.app.web_dir / rel).resolve()
             target.relative_to(self.app.web_dir)
+            if not target.is_file():  # raises for a name too long for the system
+                return self._send(404)
         except (ValueError, OSError):
-            return self._send(404)
-        if not target.is_file():
             return self._send(404)
         st = target.stat()
         etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
@@ -262,15 +267,19 @@ class _Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin not in (f"http://127.0.0.1:{self.app.port}", f"http://localhost:{self.app.port}"):
             return self._send(403)
+        # a request refused before its body is read leaves that body on the connection: it closes
         if not (self.headers.get("Content-Type", "").startswith("application/json")):
-            return self._send(415)
-        length = int(self.headers.get("Content-Length") or 0)
+            return self._refuse(415)
+        length = self.headers.get("Content-Length", "")
+        if not re.fullmatch(r"\d{1,12}", length.strip()):
+            return self._refuse(400)  # missing, negative or not a number: read(-1) would wait for ever
+        length = int(length)
         if length > MAX_BODY:
-            return self._send(413)
+            return self._refuse(413)
         try:
             payload = json.loads(self.rfile.read(length) or b"{}") if length else {}
         except ValueError:
-            return self._send(400)
+            return self._refuse(400)
         result = self.app.api.dispatch(m.group(1), payload if isinstance(payload, dict) else {})
         body = json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")
         return self._send(200, body, "application/json; charset=utf-8")

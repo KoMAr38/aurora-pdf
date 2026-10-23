@@ -120,7 +120,7 @@
       return k < 0 ? { page: i, rev: -1 } : { page: k, rev: S.doc.pages[k][2] };
     };
   };
-  /** Resolves once every queued edit has been answered (used by tests and before saving). */
+  /** Resolves once every queued edit has been answered (before saving, printing or exporting). */
   A.idle = () => chain.then(() => null);
   /** Finish what the user just did (a form field or text box still being typed in, ink waiting to be
    *  batched, queued edits) before the document is saved, printed or exported. */
@@ -167,8 +167,7 @@
     A.toast(msg, "bad");
   };
   A.savedToast = (path, msgKey = "savedTo") => {
-    const name = (path || "").split(/[\\/]/).pop();
-    A.toast(A.t(msgKey, { name }), "good", path ? { label: A.t("showFolder"), run: () => A.call("reveal", { path }, { quiet: true }) } : null);
+    A.toast(A.t(msgKey, { name: A.basename(path) }), "good", path ? { label: A.t("showFolder"), run: () => A.call("reveal", { path }, { quiet: true }) } : null);
   };
 
   /* ---------- modal ---------- */
@@ -310,6 +309,14 @@
     Object.assign({ day: "numeric", month: "numeric", year: "numeric" }, time ? { hour: "2-digit", minute: "2-digit" } : {}));
   A.dirname = (p) => (p || "").replace(/[\\/][^\\/]*$/, "");
   A.basename = (p) => (p || "").split(/[\\/]/).pop();
+  /** The shortcut key of a key press: Cyrillic, Greek or AZERTY layouts give "ы" or "à" for Ctrl+S / Ctrl+0,
+   *  so a key that is not a Latin letter, digit or = + - falls back to the physical key (KeyS -> "s"). */
+  A.keyOf = (e) => {
+    const k = (e.key || "").toLowerCase();
+    if (/^[a-z0-9=+-]$/.test(k)) return k;
+    const m = /^(?:Key([A-Z])|Digit(\d))$/.exec(e.code || "");
+    return m ? (m[1] || m[2]).toLowerCase() : k;
+  };
 
   /** Page list text ("1-3, 5") from a set of 0-based indices. */
   A.rangeText = (pages) => {

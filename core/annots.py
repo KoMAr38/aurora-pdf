@@ -216,15 +216,7 @@ def page_info(page: pymupdf.Page) -> dict:
 
 def doc_annots(doc: pymupdf.Document) -> list[dict]:
     """Every annotation in the document (for the comments list), page by page."""
-    out = []
-    for pno, page in enumerate(doc):
-        for a in page.annots():
-            if a.type[0] in SKIP_TYPES:
-                continue
-            d = annot_info(page, a)
-            d["p"] = pno
-            out.append(d)
-    return out
+    return [{**d, "p": pno} for pno, page in enumerate(doc) for d in page_annots(page)]
 
 
 # --- creating annotations ----------------------------------------------------------
@@ -363,9 +355,11 @@ def mark_redaction_text(doc: pymupdf.Document, query: str, *, author="") -> int:
     """Mark every occurrence of ``query`` for redaction. Returns the number of marks."""
     n = 0
     for page in doc:
-        for r in page.search_for(query):
+        # without TEXT_PRESERVE_LIGATURES (on by default): "fi" finds a word written with the ﬁ glyph
+        for r in page.search_for(query, flags=pymupdf.TEXT_DEHYPHENATE | pymupdf.TEXT_PRESERVE_WHITESPACE
+                                 | pymupdf.TEXT_MEDIABOX_CLIP):
             a = page.add_redact_annot(r, fill=(0, 0, 0))
-            _finish(a, author)
+            _finish(a, author, content=query)  # the query: applying the mark takes it out of bookmarks too
             n += 1
     return n
 
@@ -381,6 +375,8 @@ def apply_redactions(doc: pymupdf.Document) -> int:
     its words again for copying and screen readers: what it says for content under a mark goes too.
     """
     n, heads, gone, pages, under, unsure, moved, pictures = 0, set(), set(), set(), {}, set(), {}, set()
+    queries = {a.info["content"] for page in doc for a in page.annots(types=[pymupdf.PDF_ANNOT_REDACT])
+               if a.info["content"]}
     for page in doc:
         count, marks, taken = _marks(page)
         if not count:
@@ -467,7 +463,30 @@ def apply_redactions(doc: pymupdf.Document) -> int:
             doc.update_object(xref, "<<>>")
         _drop_structure_text(doc, pages, under, unsure, gone | streams, moved, pictures)
         _drop_xfa(doc)
+        _redact_titles(doc, queries)
     return n
+
+
+def _redact_titles(doc, queries: set[str]) -> None:
+    """Each query (a search redaction's /Contents) in a bookmark title becomes █, as case-blind as search_for.
+    The bookmark keeps its target; a full save drops the old title with the old object."""
+    if not queries:
+        return
+    pattern = re.compile("|".join(map(re.escape, sorted(queries, key=len, reverse=True))), re.I)
+    kind, val = doc.xref_get_key(doc.pdf_catalog(), "Outlines/First")
+    todo, seen = [int(val.split()[0])] if kind == "xref" else [], set()
+    while todo:
+        xref = todo.pop()
+        if xref in seen:
+            continue
+        seen.add(xref)
+        kind, title = doc.xref_get_key(xref, "Title")
+        if kind == "string" and pattern.search(title):
+            doc.xref_set_key(xref, "Title", pymupdf.get_pdf_str(pattern.sub("\u2588", title)))
+        for key in ("First", "Next"):
+            kind, val = doc.xref_get_key(xref, key)
+            if kind == "xref":
+                todo.append(int(val.split()[0]))
 
 
 _COPY_OF = "AuroraCopyOf"  # on a drawing for the length of one redaction: the xref it was copied from
@@ -715,22 +734,27 @@ def _shifted(before: list, after: list, areas: list) -> bool:
     """Whether a rewrite of the page drew a glyph that was not there before (in place and way of drawing), or lost
     one that MuPDF's redaction does not take: one whose box (see _Glyphs) touches none of ``areas``, what MuPDF
     took."""
-    def index(glyphs) -> dict:
-        grid = collections.defaultdict(list)
-        for g in glyphs:
-            grid[g[0], *g[4:], round(g[1]), round(g[2])].append(g)
-        return grid
+    def place(g) -> tuple:
+        return g[0], *g[4:], g[1], g[2]
 
-    def there(grid: dict, g) -> bool:
+    grids = {}  # built on the first glyph that is not in the same place
+
+    def near(glyphs: list, g) -> bool:  # within a hair, in the nine cells around it
+        if id(glyphs) not in grids:
+            grids[id(glyphs)] = cells = collections.defaultdict(list)
+            for h in glyphs:
+                cells[h[0], *h[4:], round(h[1]), round(h[2])].append(h)
         return any(abs(h[1] - g[1]) <= 0.05 and abs(h[2] - g[2]) <= 0.05 for dx in (-1, 0, 1) for dy in (-1, 0, 1)
-                   for h in grid.get((g[0], *g[4:], round(g[1]) + dx, round(g[2]) + dy), ()))
+                   for h in grids[id(glyphs)].get((g[0], *g[4:], round(g[1]) + dx, round(g[2]) + dy), ()))
 
     def taken(box) -> bool:  # MuPDF works in floats: a hair's room
         return box is not None and any(box[0] <= r.x1 + 0.01 and r.x0 - 0.01 <= box[2] and box[1] <= r.y1 + 0.01
                                        and r.y0 - 0.01 <= box[3] for r in areas)
 
-    was, now = index(before), index(after)
-    return not all(there(was, g) for g in after) or any(not taken(g[3]) and not there(now, g) for g in before)
+    # the same place first (nearly every glyph): the cells around it only for the rest
+    was, now = {place(g) for g in before}, {place(g) for g in after}
+    return (any(place(g) not in was and not near(before, g) for g in after)
+            or any(place(g) not in now and not near(after, g) and not taken(g[3]) for g in before))
 
 
 def _out_of_reach(doc, page, areas: list, own: set[int], olds: set[int]) -> None:
@@ -1398,8 +1422,12 @@ def _entries(data: bytes, s: int, e: int) -> list[tuple[bytes, int, int, int]]:
             continue
         k = _object_end(data, i)
         v = k
-        while v < e and data[v] in _WS:
-            v += 1
+        while v < e and (data[v] in _WS or data[v] == 0x25):  # a comment can stand before the value too
+            if data[v] == 0x25:
+                m = _EOL.search(data, v)
+                v = m.start() if m else e
+            else:
+                v += 1
         end = _object_end(data, v) if v < e else v
         out.append((data[i:k], i, v, end))
         i = end
@@ -2102,9 +2130,8 @@ def move_annot(page, xref: int, dx: float, dy: float) -> None:
             continue
         x0, y0, x1, y1 = (float(t) for t in val.strip("[]").split())
         doc.xref_set_key(x, "Rect", f"[{x0 + d.x:g} {y0 + d.y:g} {x1 + d.x:g} {y1 + d.y:g}]")
-    a = _load(page, xref)
-    if a.info.get("name") != "ImageStamp":
-        a.update()
+    if doc.xref_get_key(a.xref, "AP")[0] == "null":  # a drawing follows its /Rect: redrawing would lose another program's
+        _load(page, xref).update()
 
 
 def resize_annot(page, xref: int, rect: Sequence[float]) -> None:
@@ -2140,7 +2167,9 @@ def edit_annot(page, xref: int, *, content=None, color=None, opacity=None, width
     if width is not None and t not in MARKUP_TYPES | {pymupdf.PDF_ANNOT_FREE_TEXT, pymupdf.PDF_ANNOT_TEXT}:
         a.set_border(width=float(width) * size_unit(page))
     a.set_info(modDate=pymupdf.get_pdf_now(), **({"title": author} if author is not None else {}))
-    if a.info.get("name") != "ImageStamp":
+    # redraw only for a change the drawing shows: update() replaces another program's drawing with MuPDF's own
+    drawn = (content is not None and t == pymupdf.PDF_ANNOT_FREE_TEXT) or any(v is not None for v in (color, opacity, width))
+    if drawn and a.info.get("name") != "ImageStamp":
         a.update()
 
 
@@ -2417,15 +2446,19 @@ def settle_fields(doc: pymupdf.Document) -> None:
                     continue
                 done.add(field)  # _fill draws every widget of the field
                 try:
-                    value = _chosen(doc, field)
-                    _fill(page, w.xref, w, kind,
-                          value if w.field_flags & FF_MULTISELECT else (value or [""])[0], fields)
+                    _refill(page, w, kind, field, fields)
                 except Exception:
                     failed = True
         drawn = not failed
     finally:
         if not drawn:  # also when a page cannot be read: readers go on drawing the fields
             doc.xref_set_key(host, key, "true")
+
+
+def _refill(page, w, kind: str, field: int, fields: dict) -> None:
+    """Draw the widgets of ``field`` again with the value the field holds."""
+    value = _chosen(page.parent, field)
+    _fill(page, w.xref, w, kind, value if w.field_flags & FF_MULTISELECT else (value or [""])[0], fields)
 
 
 def _fill(page, xref: int, w, kind: str, value, fields: dict | None = None) -> None:
@@ -2540,14 +2573,14 @@ def reset_fields(doc: pymupdf.Document) -> int:
             dv = m.pdf_dict_get_inheritable(m.pdf_load_object(pdf, field), m.PdfObj(m.PDF_ENUM_NAME_DV))
             _turn(page, w.xref, m.pdf_to_name(dv) or m.pdf_to_text_string(dv) or "Off", fields)
         elif kind in ("combo", "list", "text"):
-            value = _chosen(doc, field)  # the field's: a widget /Kids does not list keeps a value of its own
-            _fill(page, w.xref, w, kind, value if w.field_flags & FF_MULTISELECT else (value or [""])[0], fields)
+            _refill(page, w, kind, field, fields)  # the field's value: a widget /Kids does not list keeps one of its own
     if n:
         _drop_xfa(doc)
     return n
 
 
-def flatten(doc: pymupdf.Document, *, annots: bool = False) -> None:
-    """Burn form fields (and optionally all annotations) into the page content."""
-    doc.bake(annots=annots, widgets=True)
+def flatten(doc: pymupdf.Document) -> None:
+    """Burn form fields into the page content. Comments stay: baking would draw a redaction mark without
+    taking the text under it."""
+    doc.bake(annots=False, widgets=True)
     _drop_xfa(doc)  # else Adobe Reader shows the form's fields again

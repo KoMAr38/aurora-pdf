@@ -571,7 +571,7 @@
     }
     if (A.topModal()) return;
     if (ctrl) {
-      const k = e.key.toLowerCase();
+      const k = A.keyOf(e);
       const map = {
         o: () => A.openFile(), s: () => (e.shiftKey ? A.saveAs() : A.save()), p: () => A.print(),
         f: () => { $("#search").focus(); $("#search").select(); }, z: () => (e.shiftKey ? A.edit("redo", {}) : A.edit("undo", {})),
@@ -596,7 +596,7 @@
     if (e.key === "Home") { e.preventDefault(); A.gotoPage(0); return; }
     if (e.key === "End") { e.preventDefault(); A.gotoPage(S.doc.pages.length - 1); return; }
     if (e.key === "?") { A.showShortcuts(); return; }
-    const mode = A.TOOL_KEYS[e.key.toLowerCase()];
+    const mode = A.TOOL_KEYS[A.keyOf(e)];
     if (mode && !e.altKey) {
       if (!["select", "hand"].includes(mode) && !A.can("annotate")) return;
       if (S.panel !== "annotate") A.openPanel("annotate");
@@ -644,6 +644,7 @@
     S.fit = S.settings.fit || "width";
     S.recent = st.recent || [];
     S.ocrLangs = st.ocrLangs || {};
+    S.version = st.version || "";
     $("#app").classList.toggle("night", S.night);
     rebuildChrome();
     A.setMode("select");

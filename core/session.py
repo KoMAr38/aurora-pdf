@@ -19,13 +19,13 @@ import secrets
 import tempfile
 import threading
 import time
-from pathlib import Path
 
 import pymupdf
 
 from . import annots as an
 from . import ocr
 from . import pdftools as pt
+from .paths import write_atomic
 
 _REV = itertools.count(1)
 _STATE = itertools.count(1)
@@ -68,22 +68,6 @@ def _has_signatures(doc) -> bool:
 
 class SessionError(ValueError):
     """Error with a stable code the UI translates (NO_DOC, NOT_ALLOWED, BUSY, ...)."""
-
-
-def _atomic(out_path: str, produce) -> None:
-    """``produce(tmp)`` writes a temp file next to ``out_path``, which then replaces it in one step."""
-    tmp = out_path + ".aurora-tmp"
-    try:
-        produce(tmp)
-        os.replace(tmp, out_path)
-    except PermissionError as exc:
-        raise SessionError("FILE_LOCKED") from exc
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
 
 
 class Snapshot:
@@ -275,10 +259,11 @@ class Session:
     def _snapshot(self, label: str) -> Snapshot:
         return Snapshot(label, self.doc.tobytes(), list(self.revs), list(self.sizes), self.state, self.fonts_embedded)
 
-    def _restore(self, snap: Snapshot) -> None:
-        """Go back to ``snap``, which is used up by that (undo and redo keep a new one of the state they leave)."""
+    def _restore(self, snap: Snapshot, doc=None) -> None:
+        """Go back to ``snap`` (``doc``: opened from it already), which is used up by that (undo and redo keep a
+        new one of the state they leave)."""
         old = self.doc
-        self.doc = pymupdf.open("pdf", snap.data)
+        self.doc = pymupdf.open("pdf", snap.data) if doc is None else doc
         if old is not None:
             old.close()
         self.revs, self.sizes, self.state, self.fonts_embedded = list(snap.revs), list(snap.sizes), snap.state, snap.fonts
@@ -315,7 +300,15 @@ class Session:
             try:
                 yield ed
             except BaseException:
-                self._restore(snap)
+                try:
+                    self._restore(snap)
+                except Exception:  # the step cannot be read back: keep the half-done change, shown and unsaved
+                    logging.getLogger("aurora").exception("could not roll back %s", label)
+                    snap.close()
+                    self.revs = [next(_REV) for _ in range(len(self.doc))]
+                    self.sizes = [self._size(i) for i in range(len(self.doc))]
+                    self._reindex()
+                    self.state = next(_STATE)
                 raise
             self._commit(snap, ed)
 
@@ -343,36 +336,55 @@ class Session:
         self.state = next(_STATE)
 
     def undo(self) -> bool:
-        with self.lock:
-            self.require()
-            self._check_job()
-            if not self.undo_stack:
-                return False
-            snap = self.undo_stack.pop()
-            self.redo_stack.append(self._snapshot(snap.label))
-            self._restore(snap)
-            return True
+        return self._step(self.undo_stack, self.redo_stack)
 
     def redo(self) -> bool:
+        return self._step(self.redo_stack, self.undo_stack)
+
+    def _step(self, src: list, dst: list) -> bool:
+        """Go to the state on top of ``src``, keeping the one left on ``dst``."""
         with self.lock:
             self.require()
             self._check_job()
-            if not self.redo_stack:
+            if not src:
                 return False
-            snap = self.redo_stack.pop()
-            self.undo_stack.append(self._snapshot(snap.label))
-            self._restore(snap)
+            snap = src[-1]
+            doc = pymupdf.open("pdf", snap.data)  # a damaged step fails here, before the history changes
+            dst.append(self._snapshot(snap.label))
+            src.pop()
+            self._restore(snap, doc)
             return True
 
     # --- long page-by-page work (OCR) ------------------------------------------------
 
-    def run_pages(self, label: str, pages, fn, progress=None, right: str = "modify") -> list[int]:
+    def reserve_job(self, label: str) -> tuple[int, int]:
+        """Take the job slot for ``label`` before its thread starts, so nothing changes the pages it was given
+        meanwhile: edits, undo and opening a file are refused (BUSY) from now. Returns the document's identity,
+        which :meth:`run_pages` checks (``reserved``) as it takes over the slot."""
+        with self.lock:
+            self.require()
+            if self.job:
+                raise SessionError("BUSY")
+            self.job, self._job_thread = label, None
+            return self.doc_id, self.state
+
+    def release_job(self, label: str) -> None:
+        """Give back a reservation whose thread never ran."""
+        with self.lock:
+            if self.job == label and self._job_thread is None:
+                self.job = None
+
+    def run_pages(self, label: str, pages, fn, progress=None, right: str = "modify", reserved=None) -> list[int]:
         """Apply ``fn(page) -> bool changed`` page by page as ONE undo step.
 
         The lock is released between pages so the viewer keeps rendering; other edits are
         refused (BUSY) until the run finishes. Cancelling keeps the pages already done.
         """
         with self.lock:
+            if reserved is not None:
+                self.release_job(label)
+                if (self.doc_id, self.state) != tuple(reserved):
+                    raise SessionError("STALE")  # another document, or this one changed (closed meanwhile)
             self.require(right)
             if self.job:
                 raise SessionError("BUSY")
@@ -419,8 +431,7 @@ class Session:
         with self.lock:
             self.require()
             prot = self.save_protection() if protection == "keep" else protection
-            _atomic(out_path, lambda tmp: pt.save_pdf(self.doc, tmp, subset_fonts=self.fonts_embedded,
-                                                      **pt.protection_args(prot)))
+            pt.save_pdf(self.doc, out_path, subset_fonts=self.fonts_embedded, **pt.protection_args(prot))
             if self._is_path(out_path):
                 self.original = None  # the file holds a rewrite now, and its signatures are broken
                 self.disk = _stamp(out_path)
@@ -454,8 +465,7 @@ class Session:
         with self.lock:
             self.require()
             if self.copies_as_is:  # the bytes as opened, also over the file itself if something replaced it since
-                data = self.original
-                _atomic(out_path, lambda tmp: Path(tmp).write_bytes(data))
+                write_atomic(out_path, self.original)
             else:
                 if self._is_path(out_path) and self.protection and self.protection.get("owner_pw") is None:
                     raise SessionError("SAVE_AS_COPY")

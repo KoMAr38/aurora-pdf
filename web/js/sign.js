@@ -109,7 +109,7 @@
   A.createSignature = () => {
     let tab = "draw", color = INKS[0], font = FONTS[0];
     const body = A.h(`<div class="sigmaker">
-      <div class="seg" id="sgTabs"><button data-v="draw" class="active">${A.t("sigDraw")}</button><button data-v="type">${A.t("sigType")}</button><button data-v="image">${A.t("sigImage")}</button></div>
+      <div class="seg" id="sgTabs"><button data-v="draw" class="active">${A.esc(A.t("sigDraw"))}</button><button data-v="type">${A.esc(A.t("sigType"))}</button><button data-v="image">${A.esc(A.t("sigImage"))}</button></div>
       <div class="sg-pane" data-p="draw"><div class="pad-wrap"><canvas class="pad"></canvas><div class="pad-line"></div><span class="pad-hint">${A.esc(A.t("sigDrawHint"))}</span></div>
         <div class="sg-row"><div class="inks">${INKS.map((c, k) => `<button class="sw${k ? "" : " on"}" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join("")}</div><button class="btn ghost sm" id="sgClear">${A.icon("eraser", 15)}${A.esc(A.t("clear"))}</button></div></div>
       <div class="sg-pane hidden" data-p="type"><input class="input" id="sgName" maxlength="60">

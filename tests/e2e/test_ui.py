@@ -827,7 +827,7 @@ def test_watermark_and_header_footer(ui):
     ui.idle()
     assert ui.doc()["undo"] == "header"
     text = ui.rpc("page_text", {"page": 1})["text"]
-    assert "NACRT" in text
+    assert "NACRT" not in text  # the watermark is drawn, so it cannot be selected or copied
     assert re.search(r"(Strana|Page|Side) 2 (od|of|av) 3", text)
 
 
@@ -1304,7 +1304,7 @@ def test_print_renders_every_page_into_the_print_frame(ui):
 def test_languages_switch_everything(ui):
     ui.open("plain")
     langs = ui.js("Aurora.LANGS.map(([code]) => code)")
-    assert len(langs) == 21 and langs[:3] == ["sr", "en", "no"]
+    assert len(langs) == 22 and langs[:3] == ["sr", "en", "no"]
     for lang in langs:
         ui.js("Aurora.openPanel('settings')")
         ui.page.select_option("#sLang", lang)
@@ -1430,3 +1430,77 @@ def test_text_from_a_pdf_never_becomes_markup(ui, tmp_path):
     ui.page.wait_for_function("(n) => [...document.querySelectorAll('#start .ritem .rn')].some(e => e.textContent === n)",
                               arg=path.name, timeout=10000)
     assert ui.js("window.__xss === undefined") and ui.js("document.querySelectorAll('img[src=\"x\"]').length") == 0
+
+
+# ---------------------------------------------------------------- audit fixes
+
+def _key(ui, key, code, ctrl=False):
+    ui.js("""([key, code, ctrl]) => document.body.dispatchEvent(new KeyboardEvent('keydown',
+        { key, code, ctrlKey: ctrl, bubbles: true, cancelable: true }))""", [key, code, ctrl])
+
+
+def test_shortcuts_work_on_cyrillic_greek_and_azerty_layouts(ui):
+    """Ctrl+S on a Russian layout gives the key "ы"; the physical key S is meant."""
+    ui.open("plain")
+    ui.js("() => { window.hits = []; Aurora.save = () => hits.push('save'); Aurora.fit = (m) => hits.push(m); }")
+    _key(ui, "ы", "KeyS", ctrl=True)
+    _key(ui, "σ", "KeyS", ctrl=True)  # Greek
+    _key(ui, "à", "Digit0", ctrl=True)  # French AZERTY Ctrl+0
+    assert ui.js("window.hits") == ["save", "save", "width"]
+    ui.page.mouse.click(700, 500)
+    _key(ui, "з", "KeyP")  # P on a Russian layout
+    assert ui.js("Aurora.S.mode") == "pen"
+    _key(ui, "м", "KeyV")
+    assert ui.js("Aurora.S.mode") == "select"
+
+
+def test_long_file_names_wrap_in_toasts_and_dialogs(ui):
+    name = "a" * 116 + ".pdf"
+    ui.js("(n) => Aurora.toast(Aurora.t('savedTo', { name: n }))", name)
+    ui.js("(n) => { Aurora.confirm('x', n); }", name)
+    ui.page.wait_for_selector(".scrim .m-body p")
+    sizes = ui.js("""() => [...document.querySelectorAll('.toast, .toast .msg, .modal, .m-body, .m-body p')]
+        .map((e) => [e.scrollWidth, e.clientWidth])""")
+    assert sizes and all(s <= c for s, c in sizes), sizes
+
+
+def test_the_annotation_bar_is_only_moved_while_scrolling(ui):
+    ui.open("report")
+    ui.tool("rect")
+    ui.drag(0, [(100, 200), (200, 260)])
+    ui.idle()
+    ui.tool("select")
+    ui.click_at(0, 150, 201)
+    ui.page.wait_for_selector("#annbar:not(.hidden)")
+    top0 = ui.js("parseFloat(document.querySelector('#annbar').style.top)")
+    ui.js("""() => { window.rebuilt = 0;
+        new MutationObserver(() => rebuilt++).observe(document.querySelector('#annbar'), { childList: true }); }""")
+    ui.js("() => { const v = document.querySelector('#viewer'); for (let k = 0; k < 10; k++) { v.scrollTop += 4; v.dispatchEvent(new Event('scroll')); } }")
+    ui.page.wait_for_timeout(200)
+    assert ui.js("window.rebuilt") == 0
+    assert ui.js("parseFloat(document.querySelector('#annbar').style.top)") < top0
+
+
+def test_plural_forms_of_russian_and_macedonian(ui):
+    forms = ui.js("""() => { const out = {}; const t = Aurora.t; Aurora.t = (k) => k.slice(1);
+        for (const [lang, ns] of [['ru', [1, 2, 5, 21, 22, 25, 11]], ['mk', [1, 2, 21, 11]]]) {
+          Aurora.S.lang = lang; out[lang] = ns.map((n) => Aurora.plural(n, 'x')); }
+        Aurora.t = t; Aurora.S.lang = 'sr'; return out; }""")
+    assert forms == {"ru": ["One", "Few", "Many", "One", "Few", "Many", "Many"], "mk": ["One", "Few", "One", "Few"]}
+
+
+def test_numbers_and_dates_format_in_every_language(ui):
+    bad = ui.js("""() => { const bad = [];
+        for (const [lang] of Aurora.LANGS) { Aurora.S.lang = lang;
+          try { const n = Aurora.fmtNum(1234.5, 1), d = Aurora.fmtShort(new Date(2026, 9, 23));
+                if (!n || !d) bad.push(lang); } catch (e) { bad.push(lang + ': ' + e); } }
+        Aurora.S.lang = 'sr'; return bad; }""")
+    assert bad == []
+
+
+def test_a_long_word_fits_its_segment_button(ui):
+    """Russian "Автоматически" ran out of its third of the theme switch."""
+    ui.js("Aurora.setLang('ru')")
+    ui.js("Aurora.openPanel('settings')")
+    sizes = ui.js("() => [...document.querySelectorAll('#panel .seg, #panel .seg button')].map((e) => [e.scrollWidth, e.clientWidth])")
+    assert sizes and all(s <= c for s, c in sizes), sizes

@@ -98,7 +98,8 @@
     const gT = svgEl("g", { class: "g-tmp" });
     ov.appendChild(gT);
     (pg.previews || []).forEach((pv) => gT.appendChild(pv.node));
-    A.positionAnnbar();
+    if (S.selAnnot) moveAnnbar();
+    else A.positionAnnbar(); // hides it at once
   };
 
   function drawSelection(pg, r, resizable, dx = 0, dy = 0) {
@@ -504,26 +505,33 @@
   };
 
   /* annotation mini toolbar */
+  // built again only when the selection, its kind or the language changes; scrolling and redraws just move it
+  let annKey = null, annSize = [0, 0], annRaf = 0;
   A.positionAnnbar = () => {
     const bar = A.$("#annbar");
     const sel = S.selAnnot;
     const pg = sel && V.pages[sel.page];
-    if (!sel || !pg || !pg.mat || !sel.a || S.mode !== "select") { bar.classList.add("hidden"); return; }
+    if (!sel || !pg || !pg.mat || !sel.a || S.mode !== "select") { bar.classList.add("hidden"); annKey = null; return; }
     const a = sel.a;
-    const colorable = !a.img && a.t !== "Redact";
-    const editable = a.t === "FreeText" || a.t === "Text";
-    const sw = colorable ? (a.t === "Highlight" ? HL_COLORS : COLORS).map((c) => `<button class="sw" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join("") : "";
-    bar.innerHTML = `${sw}${editable ? `<button class="icon-btn sm" data-act="edit" data-tip="editText">${A.icon("text", 16)}</button>` : ""}` +
-      `<button class="icon-btn sm danger" data-act="del" data-tip="delete">${A.icon("trash", 16)}</button>` +
-      (a.by ? `<span class="by">${A.esc(a.by)}</span>` : "");
-    A.applyI18n(bar);
-    bar.classList.remove("hidden");
+    const key = [sel.page, a.x, a.t, !!a.img, a.by || "", S.lang].join("|");
+    if (key !== annKey || bar.classList.contains("hidden")) {
+      const colorable = !a.img && a.t !== "Redact";
+      const editable = a.t === "FreeText" || a.t === "Text";
+      const sw = colorable ? (a.t === "Highlight" ? HL_COLORS : COLORS).map((c) => `<button class="sw" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join("") : "";
+      bar.innerHTML = `${sw}${editable ? `<button class="icon-btn sm" data-act="edit" data-tip="editText">${A.icon("text", 16)}</button>` : ""}` +
+        `<button class="icon-btn sm danger" data-act="del" data-tip="delete">${A.icon("trash", 16)}</button>` +
+        (a.by ? `<span class="by">${A.esc(a.by)}</span>` : "");
+      A.applyI18n(bar);
+      bar.classList.remove("hidden");
+      annSize = [bar.offsetWidth, bar.offsetHeight];
+      annKey = key;
+    }
     const pr = pg.el.getBoundingClientRect();
     const s = pr.width / pg.w;
     const x = pr.left + ((a.r[0] + a.r[2]) / 2) * s, y = pr.top + a.r[1] * s;
-    const bw = bar.offsetWidth;
+    const [bw, bh] = annSize;
     bar.style.left = `${A.clamp(x - bw / 2, 8, window.innerWidth - bw - 8)}px`;
-    bar.style.top = `${Math.max(64, y - bar.offsetHeight - 12)}px`;
+    bar.style.top = `${Math.max(64, y - bh - 12)}px`;
     bar.onclick = (e) => {
       const b = e.target.closest("button");
       if (!b) return;
@@ -532,6 +540,11 @@
       else if (b.dataset.act === "del") A.deleteAnnot(i, a.x);
       else if (b.dataset.act === "edit") A.editAnnotText(i, a);
     };
+  };
+  /** At most once a frame: scrolling and search redraws call this many times in a row. */
+  const moveAnnbar = () => {
+    if (annRaf || !S.selAnnot) return;
+    annRaf = requestAnimationFrame(() => { annRaf = 0; A.positionAnnbar(); });
   };
   A.editAnnotText = async (i, a) => {
     const text = await A.prompt(A.t("editText"), A.t("noteText"), a.txt || "", { multiline: true });
@@ -684,14 +697,14 @@
     });
     document.addEventListener("mouseup", () => setTimeout(showSelbar, 0));
     document.addEventListener("selectionchange", () => { if (window.getSelection().isCollapsed) hideSelbar(); });
-    A.$("#viewer").addEventListener("scroll", () => { hideSelbar(); if (S.selAnnot) A.positionAnnbar(); }, { passive: true });
+    A.$("#viewer").addEventListener("scroll", () => { hideSelbar(); moveAnnbar(); }, { passive: true });
     window.addEventListener("keydown", (e) => {
       if (e.code !== "Space" || isTyping(e)) return;
       if (e.target === V.viewer || e.target === document.body) e.preventDefault(); // else the view scrolls a screen
       if (!e.repeat) { spaceDown = true; host.classList.add("handmode"); }
     });
     window.addEventListener("keyup", (e) => { if (e.code === "Space") { spaceDown = false; host.classList.toggle("handmode", S.mode === "hand"); } });
-    A.on("zoom", () => { if (S.selAnnot) A.positionAnnbar(); });
+    A.on("zoom", moveAnnbar);
   };
   // object numbers repeat between files: a selection in the last one would pick (and Delete remove) another
   A.on("doc", ({ prev, doc }) => { if (!doc || !prev || prev.id !== doc.id) S.selAnnot = null; });

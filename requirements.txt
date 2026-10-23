@@ -5,4 +5,5 @@ pythonnet==3.2.1; sys_platform == "win32"
 pyHanko==0.37.0
 cryptography==50.0.1
 pdf2docx==0.5.13
+fonttools==4.65.0  # watermark text drawn as glyph shapes (also pulled in by pdf2docx)
 Pillow==12.3.0

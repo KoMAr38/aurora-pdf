@@ -14,6 +14,7 @@ import pymupdf
 
 from .geom import to_insert
 from .paths import TESSDATA
+from .pdftools import capped_dpi
 
 LANGUAGES = {
     "srp_latn": "Srpski (latinica)",
@@ -48,7 +49,8 @@ def looks_scanned(doc: pymupdf.Document, sample: int = 8) -> bool:
 def ocr_page(page: pymupdf.Page, languages: str = "eng", dpi: int = 300) -> int:
     """Recognise one page and add an invisible text layer. Returns the word count. ``languages``: codes
     from LANGUAGES joined by "+", as ocr_start checks them."""
-    pix = page.get_pixmap(dpi=dpi, annots=False)  # upright, as the user sees it, without comments and fields
+    # upright, as the user sees it, without comments and fields; a giant page at fewer dots per inch
+    pix = page.get_pixmap(dpi=capped_dpi(page, dpi), annots=False)
     data = pix.pdfocr_tobytes(compress=True, language=languages, tessdata=str(TESSDATA))
     ocr = pymupdf.open("pdf", data)
     try:

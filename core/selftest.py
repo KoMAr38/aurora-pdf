@@ -108,9 +108,9 @@ def check_watermark() -> str:
     from . import pdftools as pt
 
     doc = _sample_doc()
-    pt.watermark_text(doc, "POVERLJIVO", pages=[0])
-    if "POVERLJIVO" not in doc[0].get_text():
-        raise RuntimeError("watermark text not found")
+    pt.watermark_text(doc, "POVERLJIVO", pages=[0])  # drawn from the font's glyphs (fontTools)
+    if not doc[0].get_drawings() or "POVERLJIVO" in doc[0].get_text():
+        raise RuntimeError("watermark not drawn, or it came out as selectable text")
     return "text watermark"
 
 

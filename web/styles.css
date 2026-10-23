@@ -1064,7 +1064,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .seg button {
   flex: 1;
-  min-width: 0;
+  min-width: min-content; /* equal widths, but a long single word (ru "Автоматически") widens its button */
   min-height: 28px;
   padding: 5px 8px;
   line-height: 1.2;
@@ -1296,7 +1296,7 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 13.5px;
   animation: toastIn 0.2s var(--ease);
 }
-.toast .msg { flex: 1; padding-right: 4px; }
+.toast .msg { flex: 1; min-width: 0; padding-right: 4px; overflow-wrap: anywhere; }
 .toast .dot { color: var(--good); }
 .toast.bad { border-color: rgba(251, 113, 133, 0.4); }
 .toast.bad .dot { color: var(--danger); }
@@ -1364,7 +1364,7 @@ input[type="range"]::-webkit-slider-thumb {
 @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
 .m-head { display: flex; align-items: center; gap: 10px; padding: 16px 14px 4px 20px; }
 .m-head h3 { flex: 1; font-family: var(--font-display); font-size: 17px; font-weight: 600; }
-.m-body { padding: 8px 20px 4px; overflow-y: auto; font-size: 14px; color: var(--text-2); }
+.m-body { padding: 8px 20px 4px; overflow-y: auto; overflow-wrap: anywhere; font-size: 14px; color: var(--text-2); }
 .m-body > p { line-height: 1.55; }
 .m-body > p + .field, .m-body > .hint + .field { margin-top: 14px; }
 .m-body .hint { margin-top: 10px; }
