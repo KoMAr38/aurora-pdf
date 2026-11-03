@@ -540,7 +540,6 @@ Aurora.addLang("ja", "日本語", {
   "licenseLnk": "ライセンス",
   "thirdParty": "サードパーティ通知",
   "version": "バージョン",
-  "noDoc": "先にドキュメントを開いてください。",
   "feedback": "問題の報告・機能の提案",
   "fbBug": "問題",
   "fbIdea": "提案",
@@ -552,5 +551,10 @@ Aurora.addLang("ja", "日本語", {
   "fbGithub": "GitHub で開く",
   "fbEmpty": "先に説明を入力してください。",
   "e_UNDO_DAMAGED": "この元に戻す手順を読み込めなかったため、削除しました。ドキュメントは変更されていません。",
-  "imagesSkipped": "大きすぎるためスキップした画像: {n}"
+  "imagesSkipped": "大きすぎるためスキップした画像: {n}",
+  "checkUpdates": "更新を確認",
+  "upToDate": "最新バージョンです（{v}）。",
+  "updateAvailable": "バージョン {v} が利用できます。ダウンロードしてインストールしますか？Aurora PDF はいったん終了し、再起動します。",
+  "updateInstall": "ダウンロードしてインストール",
+  "e_UPDATE_OFFLINE": "GitHub に接続できませんでした。インターネット接続を確認してください。"
 });

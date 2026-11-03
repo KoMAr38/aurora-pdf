@@ -120,7 +120,8 @@
 
   A.on("pageImage", (pg) => {
     if (!pg.previews || !pg.previews.length) return;
-    const keep = pg.previews.filter((pv) => !(pv.until && pg.rev >= pv.until));
+    // once the edit is answered, any image of the page's current revision (newer, or older after undo) is the truth
+    const keep = pg.previews.filter((pv) => !pv.until);
     if (keep.length !== pg.previews.length) {
       pg.previews.filter((pv) => !keep.includes(pv)).forEach((pv) => pv.node.remove());
       pg.previews = keep;

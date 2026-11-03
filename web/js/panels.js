@@ -93,7 +93,6 @@
   const segVal = (root, id) => { const b = A.$(`#${id} .active`, root); return b ? b.dataset.v : null; };
   const val = (root, id) => A.$(`#${id}`, root).value;
   const on = (root, id) => A.$(`#${id}`, root).checked;
-  const noDoc = (root) => { root.innerHTML = `<div class="pempty">${A.icon("open", 26)}<p>${A.esc(A.t("noDoc"))}</p>${btn("pOpen", "openPdf", "open", "primary")}</div>`; A.$("#pOpen", root).onclick = A.openFile; };
 
   const PANELS = {};
 

@@ -540,7 +540,6 @@ Aurora.addLang("tr", "Türkçe", {
   "licenseLnk": "Lisans",
   "thirdParty": "Üçüncü taraf bildirimleri",
   "version": "Sürüm",
-  "noDoc": "Önce bir belge açın.",
   "feedback": "Sorun bildirin veya özellik önerin",
   "fbBug": "Sorun",
   "fbIdea": "Öneri",
@@ -552,5 +551,10 @@ Aurora.addLang("tr", "Türkçe", {
   "fbGithub": "GitHub'da aç",
   "fbEmpty": "Önce bir açıklama yazın.",
   "e_UNDO_DAMAGED": "Bu geri alma adımı okunamadığı için kaldırıldı. Belge değişmedi.",
-  "imagesSkipped": "Çok büyük oldukları için atlanan resimler: {n}"
+  "imagesSkipped": "Çok büyük oldukları için atlanan resimler: {n}",
+  "checkUpdates": "Güncellemeleri denetle",
+  "upToDate": "En son sürümü kullanıyorsunuz ({v}).",
+  "updateAvailable": "{v} sürümü kullanılabilir. İndirip yüklensin mi? Aurora PDF kapanıp yeniden açılacak.",
+  "updateInstall": "İndir ve yükle",
+  "e_UPDATE_OFFLINE": "GitHub'a ulaşılamadı. İnternet bağlantınızı kontrol edin."
 });

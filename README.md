@@ -6,7 +6,7 @@
 
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 465 automatiske tester. 71 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 512 automatiske tester. 78 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -84,9 +84,11 @@ Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 | Fil | Tester | Dekker |
 |---|---:|---|
 | `tests/test_engine.py` | 295 | PDF-motoren: passord og tillatelser, vannmerke og topptekst på roterte sider, sideoperasjoner, kommentarer, skjemafelt, sladding og at tekst utenfor området står der den sto, bokmerker, eksport og plassering på beskårne, roterte og uvanlige sider |
-| `tests/test_api.py` | 105 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
+| `tests/test_api.py` | 106 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 23 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 5 | Oversettelsene på alle 23 språk, også fildialogene og filnavnene |
+| `tests/test_update.py` | 4 | «Se etter oppdateringer» mot svar fra GitHub Releases: nyere og eldre versjon, ingen utgivelse ennå, uten nett, bare filer fra dette prosjektet, og aldri i Store-kopien |
+| `tests/test_install.py` | 1 | At `install.exe` kjenner igjen sin egen mappe, også etter en avinstallering som stoppet halvveis |
 | `tests/e2e/test_ui.py` | 78 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
@@ -114,7 +116,7 @@ Noen av testene:
 - `test_long_document_keeps_only_nearby_pages_alive`: i et dokument på 240 sider er høyst tolv sider levende
 - `test_theme_follows_windows_and_the_choice_is_remembered`: temaet følger Windows, og et tema valgt i menyen gjelder foran Windows og etter omstart
 
-`python main.py --selftest` prøver hver del av motoren én gang på en midlertidig fil: visning, kryptering, vannmerke, OCR, signering, Word-eksport, komprimering, serveren og WebView2. Installasjonen kjører den, og rapporten havner i `%APPDATA%\AuroraPDF\selftest.txt`.
+`python main.py --selftest` prøver hver del av motoren én gang på en midlertidig fil: visning, kryptering, vannmerke, OCR, signering, Word-eksport, komprimering, serveren og WebView2, også at .NET-bibliotekene til vinduet kan lastes. Både byggingen og `install.exe` kjører den, og rapporten havner i `%APPDATA%\AuroraPDF\selftest.txt`.
 
 ### Ytelse
 
@@ -138,11 +140,11 @@ Målt med `tests/e2e/perf.py` i hodeløs Chromium, i en Linux-container med to p
 
 ## Installere og kjøre
 
-```
-1_INSTALLER.bat
-```
+Fra Microsoft Store, eller med `install.exe` fra [Releases](https://github.com/KoMAr38/aurora-pdf/releases) på GitHub.
 
-Fila finner Python 3.11–3.14 eller tilbyr å installere 3.13 med winget. Så lager den `.venv`, installerer bibliotekene, kjører installasjonssjekken og legger snarveier på skrivebordet og i Start-menyen. Svares det J på spørsmålet om PDF-filer, kommer Aurora PDF med under «Åpne med» og i Standardapper, og Innstillinger åpnes på siden der det kan velges som standard. Det valget gjør brukeren selv, for Windows lar ikke et program gjøre seg til standard. Krever Windows 10 eller 11 med Microsoft Edge WebView2, som følger med Windows 11.
+`install.exe` har programmet i seg og trenger verken Python eller nett. Den legger programmet i `%LOCALAPPDATA%\Programs\Aurora PDF`, kjører installasjonssjekken, lager snarveier på skrivebordet og i Start-menyen, tar Aurora PDF med under «Åpne med», i Standardapper og i Innstillinger > Apper, og starter programmet. `uninstall.exe` fjerner alt dette igjen. Innstillinger, signaturer og digitale ID-er blir liggende. Krever Windows 10 eller 11 med Microsoft Edge WebView2, som følger med Windows 11.
+
+**Oppdateringer.** I kopien fra `install.exe` henter ⋯ → «Se etter oppdateringer» den nyeste `install.exe` fra Releases, og installasjonen bytter ut programmet og starter det igjen. Store-kopien oppdateres av Store, og der finnes ikke knappen. En ny versjon legges ut med `scripts\utgivelse.bat`, etter at versjonsnummeret er hevet i `core\paths.py` og `packaging\AppxManifest.xml`. `scripts\bygg.bat` lager bare de to filene i `Installer\`.
 
 Resten står i `START_HER.md`.
 

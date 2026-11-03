@@ -4,7 +4,7 @@ Aurora PDF er lisensiert under GNU AGPL 3.0 (se `LICENSE`), fordi PDF-motoren Py
 
 ## Python-pakker
 
-Installeres fra PyPI av `1_INSTALLER.bat`. Lisensene følger med pakkene.
+Hentes fra PyPI av `scripts\bygg.bat` og følger med i `install.exe` og Store-pakken. Lisensene følger med pakkene. Programmet, `install.exe` og `uninstall.exe` er pakket med PyInstaller 6.22.3 (GPL-2.0 med et unntak som tillater å dele programmer pakket med den).
 
 | Pakke | Versjon | Lisens | Brukes til |
 |---|---|---|---|

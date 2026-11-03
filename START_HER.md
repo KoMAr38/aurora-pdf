@@ -1,35 +1,28 @@
 # Start her
 
+## Installere
+
+Fra Microsoft Store, eller med `install.exe` fra [Releases](https://github.com/KoMAr38/aurora-pdf/releases) på GitHub:
+
+1. Kjør `install.exe`. Den kopierer programmet til `%LOCALAPPDATA%\Programs\Aurora PDF`, sjekker at alt virker, lager snarveier på skrivebordet og i Start-menyen, legger Aurora PDF til under «Åpne med» og starter programmet. Ingen spørsmål, ingen administratorrettigheter, ikke noe nett
+2. Ferdig
+
+Fjerne programmet: kjør `uninstall.exe`, eller velg Aurora PDF i Innstillinger > Apper. Innstillinger, signaturer og digitale ID-er i `%APPDATA%\AuroraPDF\` blir liggende.
+
+Oppdatere: ⋯ → «Se etter oppdateringer». Finnes det en nyere versjon, lastes `install.exe` ned, programmet lukkes, og den nye versjonen starter. Store-kopien oppdateres av Store og har ikke den knappen.
+
+Windows SmartScreen kan si «Windows beskyttet PC-en» første gang, fordi filen ikke er kodesignert. Velg «Mer informasjon» og «Kjør likevel».
+
 ## Krav
 
 - Windows 10 eller 11
-- Microsoft Edge WebView2 Runtime. Den følger med Windows 11 og kommer med Edge-oppdateringene på Windows 10. Mangler den, sier installasjonssjekken fra og viser lenken
-- Python 3.11–3.14. `1_INSTALLER.bat` finner den selv, eller tilbyr å installere Python 3.13 med winget
-- Internett første gang, for å hente bibliotekene. Etterpå trengs ikke nett, heller ikke til OCR
-
-## Filene
-
-| Fil | Gjør | Tid |
-|---|---|---|
-| `1_INSTALLER.bat` | Finner Python, lager `.venv`, installerer bibliotekene, kjører installasjonssjekken, lager snarveier og tilbyr Aurora PDF for PDF-filer. Kan kjøres på nytt for å oppdatere | 1–3 min første gang |
-| `START_MED_KONSOLL.bat` | Starter programmet med et konsollvindu som viser feilmeldinger. En PDF kan slippes på fila | |
-| `2_TESTER.bat` | Installerer pytest og Playwright og kjører alle testene. Ende-til-ende-testene styrer Microsoft Edge | ~2 min |
-| `3_BYGG_EXE.bat` | Lager en frittstående versjon i `dist\Aurora PDF\` med PyInstaller, til en PC uten Python | 1–2 min |
-| `AVINSTALLER.bat` | Flytter snarveiene til papirkurven og fjerner Aurora PDF fra «Åpne med» og Standardapper. Programmappen og innstillingene blir liggende | |
-
-Siste linje fra installasjonssjekken skal være:
-
-```
-All checks passed. Report: C:\Users\<bruker>\AppData\Roaming\AuroraPDF\selftest.txt
-```
-
-Siste linje fra `2_TESTER.bat` skal vise `461 passed, 4 skipped`. De fire som hoppes over, gjelder språket ved første start på andre systemer enn Windows.
+- Microsoft Edge WebView2 Runtime. Den følger med Windows 11 og kommer med Edge-oppdateringene på Windows 10. Mangler den, sier installasjonen fra og viser lenken
 
 ## Bruk
 
 - Start fra snarveien «Aurora PDF» på skrivebordet eller i Start-menyen
-- Åpne en fil med Ctrl+O, ved å dra den inn i vinduet, eller med «Åpne med» i Filutforsker hvis det ble valgt under installasjonen
-- Skal PDF-filer åpnes i Aurora PDF med dobbeltklikk og vise Aurora-ikonet, velg Aurora PDF som standard i Innstillinger > Apper > Standardapper. Windows lar ikke programmer gjøre det selv. Installasjonen åpner den siden når PDF-spørsmålet besvares med J
+- Åpne en fil med Ctrl+O, ved å dra den inn i vinduet, eller med «Åpne med» i Filutforsker
+- Skal PDF-filer åpnes i Aurora PDF med dobbeltklikk, velg Aurora PDF som standard i Innstillinger > Apper > Standardapper. Windows lar ikke programmer gjøre det selv
 - Språk og tema velges under ⋯ → Innstillinger. Første gang følger språket Windows: norsk, serbisk (også for kroatisk og bosnisk) eller ellers engelsk. Temaet følger Windows til et annet er valgt
 - `?` viser alle hurtigtastene
 
@@ -47,6 +40,20 @@ Alt ligger i `%APPDATA%\AuroraPDF\`:
 
 ## Når noe ikke virker
 
-- Vinduet er hvitt eller åpner seg ikke: WebView2 mangler. Installer «Microsoft Edge WebView2 Runtime» fra Microsoft og kjør `1_INSTALLER.bat` på nytt
-- Programmet lukker seg eller en funksjon feiler: start med `START_MED_KONSOLL.bat` for å se feilmeldingen, eller les `aurora.log`
-- En gammel `.venv` laget med en Python-versjon utenfor 3.11–3.14 blir flyttet til `_to_delete\` av `1_INSTALLER.bat`. Den mappen kan slettes
+- Installasjonen stopper med «Installasjonssjekken fant feil»: les `selftest.txt`. Står det WebView2, installer «Microsoft Edge WebView2 Runtime» fra Microsoft og kjør `install.exe` på nytt
+- En funksjon feiler: les `aurora.log`
+
+## For utviklere
+
+Krever Python 3.11–3.14.
+
+| Hva | Kommando |
+|---|---|
+| Kjøre fra kildekoden | `.venv\Scripts\python.exe main.py` |
+| Installasjonssjekken | `.venv\Scripts\python.exe main.py --selftest`. Siste linje skal være `All checks passed.` |
+| Testene (pytest og Playwright) | `.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`, så `.venv\Scripts\python.exe -m pytest`. Siste linje skal vise `502 passed, 10 skipped`. Ni av dem som hoppes over, gjelder språket ved første start på andre systemer enn Windows, og én trenger skriften DejaVu Sans |
+| Lage `install.exe` og `uninstall.exe` | `scripts\bygg.bat`. Lager `.venv` om den mangler, kjører installasjonssjekken og legger de to filene i `Installer\` |
+| Legge ut en ny versjon | Hev versjonen i `core\paths.py` og `packaging\AppxManifest.xml`, og kjør `scripts\utgivelse.bat`. Den bygger og legger `install.exe` og `uninstall.exe` ut som `v<versjon>` på GitHub, der «Se etter oppdateringer» finner dem. Krever GitHub CLI (`gh auth login`) |
+| Store-pakken | Bygges på GitHub når grenen `store` sendes opp (`.github/workflows/store.yml`) |
+
+Ende-til-ende-testene bruker Microsoft Edge når den finnes, ellers Playwrights egen Chromium (`.venv\Scripts\python.exe -m playwright install --only-shell chromium`).

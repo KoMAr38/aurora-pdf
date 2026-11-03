@@ -21,7 +21,7 @@ import webbrowser
 import pymupdf
 
 from core import annots as an
-from core import ocr, settings, signing
+from core import ocr, settings, signing, update
 from core import pdftools as pt
 from core.geom import size_unit
 from core.paths import VERSION
@@ -185,6 +185,7 @@ class Api:
         self._quit = None  # set by main: callable that closes the window for real
         self._titlebar = None  # set by main on Windows: callable(dark) that recolours the title bar
         self.boot_files: list[str] = []  # set by main: files named on the command line
+        self.packaged = False  # set by main: running from the Store's MSIX package, which updates itself
 
     # --- plumbing -----------------------------------------------------------------
 
@@ -300,6 +301,7 @@ class Api:
             "ocrLangs": ocr.available_languages(),
             "jobs": self._jobs.running(),
             "version": VERSION,
+            "packaged": self.packaged,
             "os": f"{platform.system()} {platform.release()} ({platform.version()})",
         }
 
@@ -562,11 +564,11 @@ class Api:
 
     @rpc
     def insert_blank(self, a):
-        doc = self.s.require("assemble")
-        at = int(a.get("at", len(doc)))
-        like = max(0, min(int(a.get("like", at - 1 if at > 0 else 0)), len(doc) - 1))
-        r = doc[like].rect
         with self.s.edit("insert", right="assemble") as ed:
+            doc = self.s.doc
+            at = int(a.get("at", len(doc)))
+            like = max(0, min(int(a.get("like", at - 1 if at > 0 else 0)), len(doc) - 1))
+            r = doc[like].rect
             revs = list(self.s.revs)
             pos = pt.insert_blank(self.s.doc, at, r.width, r.height)
             revs.insert(pos, None)
@@ -855,7 +857,8 @@ class Api:
     def toc_set(self, a):
         with self.s.edit("bookmarks", right="modify", pages=[]):
             pt.set_toc(self.s.doc, a.get("items", []))
-        return self._doc(items=pt.get_toc(self.s.doc))
+            items = pt.get_toc(self.s.doc)  # still under the lock: MuPDF must not run on two threads
+        return self._doc(items=items)
 
     @rpc
     def attachments(self, a):
@@ -870,7 +873,8 @@ class Api:
             return {"ok": False, "error": "CANCELLED"}
         with self.s.edit("attachment", pages=[]):
             pt.add_attachment(self.s.doc, paths[0])
-        return self._doc(items=pt.list_attachments(self.s.doc))
+            items = pt.list_attachments(self.s.doc)
+        return self._doc(items=items)
 
     @rpc
     def attachment_save_dialog(self, a):
@@ -890,7 +894,8 @@ class Api:
     def attachment_delete(self, a):
         with self.s.edit("attachment", pages=[]):
             pt.delete_attachment(self.s.doc, a.get("name", ""))
-        return self._doc(items=pt.list_attachments(self.s.doc))
+            items = pt.list_attachments(self.s.doc)
+        return self._doc(items=items)
 
     @rpc
     def doc_info(self, a):
@@ -919,6 +924,34 @@ class Api:
     def job_cancel(self, a):
         self._jobs.cancel(a.get("id", ""))
         return {"ok": True}
+
+    # --- updates (the copy from install.exe; the Store updates its own) -----------------
+
+    def _latest(self) -> dict:
+        try:
+            return update.latest()
+        except OSError:  # offline, GitHub down, a proxy: URLError and timeouts are OSErrors
+            raise SessionError("UPDATE_OFFLINE") from None
+
+    @rpc
+    def update_check(self, a):
+        return {"ok": True, "current": VERSION, **self._latest()}
+
+    @rpc
+    def update_start(self, a):
+        """Download the newest install.exe as a job and start it; the page then closes the program."""
+        if self.packaged:
+            raise SessionError("NOT_ALLOWED")
+        info = self._latest()
+        if not info["newer"]:
+            return {"ok": False, "error": "CANCELLED"}
+
+        def work(job):
+            # progress in MB: the dialog shows "done of total"
+            update.run_installer(update.download(info["url"], progress=lambda d, t: job.progress(d >> 20, t >> 20)))
+            return {"version": info["version"]}
+
+        return {"ok": True, "job": self._jobs.start("update", work)}
 
     @rpc
     def ocr_start(self, a):

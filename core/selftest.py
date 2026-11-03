@@ -210,6 +210,8 @@ def check_webview2() -> str:
     """The window needs Microsoft Edge WebView2 (preinstalled on Windows 10/11)."""
     if not sys.platform.startswith("win"):
         return "not Windows: skipped"
+    # loads pythonnet and the WebView2 DLLs; a blocked or copied environment fails here, not in the window
+    import webview.platforms.winforms  # noqa: F401
     import winreg
 
     keys = [

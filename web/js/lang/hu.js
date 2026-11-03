@@ -540,7 +540,6 @@ Aurora.addLang("hu", "Magyar", {
   "licenseLnk": "Licenc",
   "thirdParty": "Harmadik féltől származó közlemények",
   "version": "Verzió",
-  "noDoc": "Előbb nyisson meg egy dokumentumot.",
   "feedback": "Hiba bejelentése vagy funkció javaslása",
   "fbBug": "Hiba",
   "fbIdea": "Javaslat",
@@ -552,5 +551,10 @@ Aurora.addLang("hu", "Magyar", {
   "fbGithub": "Megnyitás a GitHubon",
   "fbEmpty": "Először írjon leírást.",
   "e_UNDO_DAMAGED": "Ezt a visszavonási lépést nem sikerült beolvasni, ezért törölve lett. A dokumentum nem változott.",
-  "imagesSkipped": "Kihagyott képek, mert túl nagyok: {n}"
+  "imagesSkipped": "Kihagyott képek, mert túl nagyok: {n}",
+  "checkUpdates": "Frissítések keresése",
+  "upToDate": "A legújabb verziót használja ({v}).",
+  "updateAvailable": "Elérhető a(z) {v} verzió. Letölti és telepíti? Az Aurora PDF bezárul, majd újraindul.",
+  "updateInstall": "Letöltés és telepítés",
+  "e_UPDATE_OFFLINE": "A GitHub nem érhető el. Ellenőrizze az internetkapcsolatot."
 });

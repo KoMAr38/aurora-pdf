@@ -1,18 +1,17 @@
-﻿# Shortcuts and the PDF registration for Aurora PDF, for the current user only.
-#   install  : Desktop + Start menu shortcuts; with -OpenWith Aurora PDF is also offered for .pdf,
-#              in "Open with" and in Settings > Default apps
+﻿# Shortcuts and the PDF registration for the installed Aurora PDF, for the current user only.
+# install.exe and uninstall.exe (scripts/install.py) run it.
+#   install  : Desktop + Start menu shortcuts, Aurora PDF in "Open with" and Settings > Default apps,
+#              and an entry in Settings > Apps that runs uninstall.exe
 #   remove   : moves the shortcuts to the Recycle Bin and removes the registry entries
 # Never changes which program opens PDF files by default; Windows leaves that choice to the user.
 param(
     [Parameter(Mandatory = $true)][string]$App,
-    [ValidateSet('install', 'remove')][string]$Action = 'install',
-    [switch]$OpenWith
+    [ValidateSet('install', 'remove')][string]$Action = 'install'
 )
 $ErrorActionPreference = 'Stop'
 $App = $App.TrimEnd('\', '"', '.').TrimEnd('\')
-$pyw = Join-Path $App '.venv\Scripts\pythonw.exe'
-$main = Join-Path $App 'main.py'
-$icon = Join-Path $App 'web\assets\aurora.ico'
+$exe = Join-Path $App 'Aurora PDF.exe'
+$icon = "$exe,0"
 $links = @(
     (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Aurora PDF.lnk'),
     (Join-Path ([Environment]::GetFolderPath('Programs')) 'Aurora PDF.lnk')
@@ -21,6 +20,7 @@ $progId = 'AuroraPDF.Document'
 $appId = 'Aurora.PDF.Desktop'  # APP_ID in main.py: the taskbar ties window, shortcuts and PDF handler together by it
 $name = 'Aurora PDF'  # must match the RegisteredApplications value name
 $caps = 'Software\AuroraPDF\Capabilities'
+$uninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\AuroraPDF'
 $about = 'PDF-leser med passord, vannmerke, kommentarer, signatur og OCR'
 $hkcu = [Microsoft.Win32.Registry]::CurrentUser
 
@@ -79,46 +79,53 @@ namespace Aurora {
     $shell = New-Object -ComObject WScript.Shell
     foreach ($lnk in $links) {
         $s = $shell.CreateShortcut($lnk)
-        $s.TargetPath = $pyw
-        $s.Arguments = '"' + $main + '"'
+        $s.TargetPath = $exe
+        $s.Arguments = ''  # CreateShortcut loads an existing shortcut: drop the old "main.py" argument
         $s.WorkingDirectory = $App
         $s.IconLocation = $icon
         $s.Description = 'Aurora PDF'
         $s.Save()
-        # without the window's ID on the shortcut, pinning the running window pins pythonw.exe itself
+        # without the window's ID on the shortcut, the pinned shortcut and the running window are two taskbar items
         [Aurora.Link]::SetAppId($lnk, $appId)
     }
     Write-Host '  Snarveier: skrivebordet og Start-menyen'
-    if ($OpenWith) {
-        # CreateSubKey opens an existing key without touching what other programs put there
-        $k = $hkcu.CreateSubKey("Software\Classes\$progId")
-        $k.SetValue('', 'PDF (Aurora PDF)')
-        $k.SetValue('AppUserModelID', $appId)
-        $k.CreateSubKey('DefaultIcon').SetValue('', $icon)
-        $k.CreateSubKey('shell\open\command').SetValue('', '"' + $pyw + '" "' + $main + '" "%1"')
-        # the name and icon Windows shows for this handler; without them it takes both from pythonw.exe
-        $a = $k.CreateSubKey('Application')
-        $a.SetValue('ApplicationName', $name)
-        $a.SetValue('ApplicationIcon', "$icon,0")
-        $a.SetValue('ApplicationDescription', $about)
-        $a.Close()
-        $k.Close()
-        $k = $hkcu.CreateSubKey('Software\Classes\.pdf\OpenWithProgids')
-        $k.SetValue($progId, [byte[]]@(), [Microsoft.Win32.RegistryValueKind]::None)
-        $k.Close()
-        # Settings > Default apps only lists programs registered here
-        $k = $hkcu.CreateSubKey($caps)
-        $k.SetValue('ApplicationName', $name)
-        $k.SetValue('ApplicationDescription', $about)
-        $k.SetValue('ApplicationIcon', "$icon,0")
-        $k.CreateSubKey('FileAssociations').SetValue('.pdf', $progId)
-        $k.Close()
-        $k = $hkcu.CreateSubKey('Software\RegisteredApplications')
-        $k.SetValue($name, $caps)
-        $k.Close()
-        Update-Shell
-        Write-Host '  PDF: Aurora PDF finnes nå under «Åpne med» og i Innstillinger > Standardapper'
-    }
+    # CreateSubKey opens an existing key without touching what other programs put there
+    $k = $hkcu.CreateSubKey("Software\Classes\$progId")
+    $k.SetValue('', 'PDF (Aurora PDF)')
+    $k.SetValue('AppUserModelID', $appId)
+    $k.CreateSubKey('DefaultIcon').SetValue('', $icon)
+    $k.CreateSubKey('shell\open\command').SetValue('', '"' + $exe + '" "%1"')
+    # the name and icon Windows shows for this handler
+    $a = $k.CreateSubKey('Application')
+    $a.SetValue('ApplicationName', $name)
+    $a.SetValue('ApplicationIcon', $icon)
+    $a.SetValue('ApplicationDescription', $about)
+    $a.Close()
+    $k.Close()
+    $k = $hkcu.CreateSubKey('Software\Classes\.pdf\OpenWithProgids')
+    $k.SetValue($progId, [byte[]]@(), [Microsoft.Win32.RegistryValueKind]::None)
+    $k.Close()
+    # Settings > Default apps only lists programs registered here
+    $k = $hkcu.CreateSubKey($caps)
+    $k.SetValue('ApplicationName', $name)
+    $k.SetValue('ApplicationDescription', $about)
+    $k.SetValue('ApplicationIcon', $icon)
+    $k.CreateSubKey('FileAssociations').SetValue('.pdf', $progId)
+    $k.Close()
+    $k = $hkcu.CreateSubKey('Software\RegisteredApplications')
+    $k.SetValue($name, $caps)
+    $k.Close()
+    # Settings > Apps: lets Windows remove the program too
+    $k = $hkcu.CreateSubKey($uninstallKey)
+    $k.SetValue('DisplayName', $name)
+    $k.SetValue('DisplayIcon', $icon)
+    $k.SetValue('InstallLocation', $App)
+    $k.SetValue('UninstallString', '"' + (Join-Path $App 'uninstall.exe') + '"')
+    $k.SetValue('NoModify', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+    $k.SetValue('NoRepair', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+    $k.Close()
+    Update-Shell
+    Write-Host '  PDF: Aurora PDF finnes nå under «Åpne med» og i Innstillinger > Standardapper'
 }
 else {
     Add-Type -AssemblyName Microsoft.VisualBasic
@@ -133,6 +140,7 @@ else {
     $k = $hkcu.OpenSubKey('Software\RegisteredApplications', $true)
     if ($k) { $k.DeleteValue($name, $false); $k.Close() }
     $hkcu.DeleteSubKeyTree('Software\AuroraPDF', $false)
+    $hkcu.DeleteSubKeyTree($uninstallKey, $false)
     Update-Shell
     Write-Host '  Snarveiene er flyttet til papirkurven, og Aurora PDF er fjernet fra «Åpne med» og standardappene'
 }

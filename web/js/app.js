@@ -51,12 +51,13 @@
   }
 
   /* ---------- opening files ---------- */
-  async function guardUnsaved() {
+  /** True when it is fine to go on: nothing unsaved, saved now, or the user chose not to save. */
+  async function guardUnsaved(closing = false) {
     await A.commitPending();
     if (!S.doc || !S.doc.dirty) return true;
     const v = await A.modal({
       title: A.t("unsavedTitle"),
-      body: `<p>${A.esc(A.t("unsavedMsg", { name: S.doc.name }))}</p>`,
+      body: `<p>${A.esc(A.t(closing ? "unsavedCloseMsg" : "unsavedMsg", { name: S.doc.name }))}</p>`,
       buttons: [
         { label: A.t("cancel"), kind: "ghost", value: null },
         { label: A.t("dontSave"), kind: "", value: "discard" },
@@ -340,8 +341,25 @@
       { label: A.t("settingsTitle"), icon: "settings", run: () => A.openPanel("settings") },
       { label: A.t("shortcuts"), icon: "keyboard", key: "?", run: A.showShortcuts },
       { label: A.t("feedback"), icon: "feedback", run: () => A.feedback() },
+      // the Store updates its own copy, and its rules allow no second way
+      ...(S.packaged ? [] : [{ label: A.t("checkUpdates"), icon: "download", run: () => A.checkUpdates() }]),
     ];
   }
+
+  /** A newer install.exe on GitHub: download it, let it replace the program, and close so it can. */
+  A.checkUpdates = async () => {
+    const r = await A.call("update_check", {});
+    if (!r) return;
+    if (!r.newer) return A.toast(A.t("upToDate", { v: r.current }), "info");
+    if (!(await A.confirm(A.t("checkUpdates"), A.t("updateAvailable", { v: r.version }), A.t("updateInstall")))) return;
+    if (!(await guardUnsaved())) return;
+    const st = await A.call("update_start", {});
+    if (!st) return;
+    const j = await A.runJob(st.job, A.t("updateInstall"));
+    if (j.state === "done") A.rpc("quit");
+    else if (j.state === "cancelled") A.toast(A.t("cancelled"), "info");
+    else A.toast(A.t("e_UPDATE_OFFLINE") + " " + (j.error || ""), "bad");
+  };
 
   /* ---------- search ---------- */
   let searchTimer = null, searchSeq = 0;
@@ -530,18 +548,7 @@
         }
         if (st) A.applyDoc(st.doc);
       }
-      if (!S.doc || !S.doc.dirty) return A.rpc("quit");
-      const v = await A.modal({
-        title: A.t("unsavedTitle"),
-        body: `<p>${A.esc(A.t("unsavedCloseMsg", { name: S.doc ? S.doc.name : "" }))}</p>`,
-        buttons: [
-          { label: A.t("cancel"), kind: "ghost", value: null },
-          { label: A.t("dontSave"), kind: "", value: "discard" },
-          { label: A.t("save"), kind: "primary", value: "save" },
-        ],
-      });
-      if (v === "discard") A.rpc("quit");
-      if (v === "save" && (await A.save())) A.rpc("quit");
+      if (await guardUnsaved(true)) A.rpc("quit");
     })();
     return true;
   };
@@ -614,7 +621,7 @@
     renderTopButtons();
     if (!prev || !doc || prev.id !== doc.id || prev.pages.length !== doc.pages.length) renderVbar();
     if (!doc) { renderStart(); S.search = { q: "", hits: [], cur: -1 }; renderSearchCount(); return; }
-    if (S.search.q && prev && prev.id === doc.id && prev.pages.some((p, k) => !doc.pages[k] || p[2] !== doc.pages[k][2])) {
+    if (S.search.q && prev && prev.id === doc.id && (prev.pages.length !== doc.pages.length || prev.pages.some((p, k) => p[2] !== doc.pages[k][2]))) {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => runSearch(S.search.q, true), 400);
     }
@@ -648,6 +655,7 @@
     S.recent = st.recent || [];
     S.ocrLangs = st.ocrLangs || {};
     S.version = st.version || "";
+    S.packaged = !!st.packaged;
     S.os = st.os || "";
     $("#app").classList.toggle("night", S.night);
     rebuildChrome();
