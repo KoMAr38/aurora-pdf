@@ -7,8 +7,11 @@ chcp 65001 >nul
 title Aurora PDF - ny versjon
 cd /d "%~dp0.."
 where gh >nul 2>&1 || (echo   Installer GitHub CLI fra https://cli.github.com og kjør gh auth login & goto :fail)
+rem a pause inside a called script would end this one too
+set "NOPAUSE=1"
 call "%~dp0bygg.bat" || goto :fail
-for /f "delims=" %%v in ('".venv\Scripts\python.exe" -c "from core.paths import VERSION; print(VERSION)"') do set "V=%%v"
+rem no quote at the start of the command: for /f would strip it and break the call
+for /f "delims=" %%v in ('.venv\Scripts\python.exe -c "from core.paths import VERSION; print(VERSION)"') do set "V=%%v"
 if not defined V goto :fail
 echo   Legger ut v%V% på GitHub
 gh release create "v%V%" "Installer\install.exe" "Installer\uninstall.exe" --title "Aurora PDF %V%" --generate-notes || goto :fail

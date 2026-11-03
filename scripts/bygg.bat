@@ -37,11 +37,11 @@ copy /y "%OUT%\install.exe" "Installer\" >nul || goto :fail
 copy /y "%OUT%\uninstall.exe" "Installer\" >nul || goto :fail
 echo.
 echo   Ferdig: Installer\install.exe og Installer\uninstall.exe
-pause
+if not defined NOPAUSE pause
 exit /b 0
 
 :fail
 echo.
 echo   Byggingen feilet. Se meldingene over.
-pause
+if not defined NOPAUSE pause
 exit /b 1
