@@ -556,5 +556,6 @@ Aurora.addLang("tr", "Türkçe", {
   "upToDate": "En son sürümü kullanıyorsunuz ({v}).",
   "updateAvailable": "{v} sürümü kullanılabilir. İndirip yüklensin mi? Aurora PDF kapanıp yeniden açılacak.",
   "updateInstall": "İndir ve yükle",
-  "e_UPDATE_OFFLINE": "GitHub'a ulaşılamadı. İnternet bağlantınızı kontrol edin."
+  "e_UPDATE_OFFLINE": "GitHub'a ulaşılamadı. İnternet bağlantınızı kontrol edin.",
+  "updateReady": "{v} sürümü kullanılabilir."
 });

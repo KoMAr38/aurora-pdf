@@ -556,5 +556,6 @@ Aurora.addLang("hu", "Magyar", {
   "upToDate": "A legújabb verziót használja ({v}).",
   "updateAvailable": "Elérhető a(z) {v} verzió. Letölti és telepíti? Az Aurora PDF bezárul, majd újraindul.",
   "updateInstall": "Letöltés és telepítés",
-  "e_UPDATE_OFFLINE": "A GitHub nem érhető el. Ellenőrizze az internetkapcsolatot."
+  "e_UPDATE_OFFLINE": "A GitHub nem érhető el. Ellenőrizze az internetkapcsolatot.",
+  "updateReady": "Elérhető a(z) {v} verzió."
 });

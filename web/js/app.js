@@ -314,6 +314,8 @@
     $("#menuBtn").innerHTML = A.icon("more", 18);
     $("#feedbackBtn").innerHTML = A.icon("feedback", 18);
     $("#feedbackBtn").onclick = () => A.feedback();
+    $("#updateBtn").innerHTML = A.icon("download", 18);
+    $("#updateBtn").onclick = () => A.lookForUpdate(true);
     $(".save-ico").innerHTML = A.icon("save", 16);
     $("#undoBtn").onclick = () => A.edit("undo", {});
     $("#redoBtn").onclick = () => A.edit("redo", {});
@@ -341,17 +343,25 @@
       { label: A.t("settingsTitle"), icon: "settings", run: () => A.openPanel("settings") },
       { label: A.t("shortcuts"), icon: "keyboard", key: "?", run: A.showShortcuts },
       { label: A.t("feedback"), icon: "feedback", run: () => A.feedback() },
-      // the Store updates its own copy, and its rules allow no second way
-      ...(S.packaged ? [] : [{ label: A.t("checkUpdates"), icon: "download", run: () => A.checkUpdates() }]),
     ];
   }
 
-  /** A newer install.exe on GitHub: download it, let it replace the program, and close so it can. */
-  A.checkUpdates = async () => {
-    const r = await A.call("update_check", {});
+  /* ---------- updates (the copy from install.exe; the Store updates its own) ---------- */
+  let newest = null; // the newer release found, if any
+  /** Ask GitHub for the newest release. Asked by the button: install it or say there is none.
+   *  On its own (start, then every 6 hours): quietly light the button and say so once per version. */
+  A.lookForUpdate = async (asked) => {
+    const r = await A.call("update_check", {}, asked ? {} : { quiet: true, noBusy: true });
     if (!r) return;
-    if (!r.newer) return A.toast(A.t("upToDate", { v: r.current }), "info");
-    if (!(await A.confirm(A.t("checkUpdates"), A.t("updateAvailable", { v: r.version }), A.t("updateInstall")))) return;
+    const fresh = r.newer && r.version !== newest;
+    newest = r.newer ? r.version : null;
+    $("#updateBtn").classList.toggle("has-update", !!newest);
+    if (asked) return newest ? installUpdate(newest) : A.toast(A.t("upToDate", { v: r.current }), "info");
+    if (fresh) A.showBanner(A.t("updateReady", { v: newest }), null, { label: A.t("updateInstall"), run: () => { A.hideBanner(); installUpdate(newest); } });
+  };
+  /** Download install.exe, let it replace the program, and close so it can. */
+  async function installUpdate(version) {
+    if (!(await A.confirm(A.t("checkUpdates"), A.t("updateAvailable", { v: version }), A.t("updateInstall")))) return;
     if (!(await guardUnsaved())) return;
     const st = await A.call("update_start", {});
     if (!st) return;
@@ -359,7 +369,7 @@
     if (j.state === "done") A.rpc("quit");
     else if (j.state === "cancelled") A.toast(A.t("cancelled"), "info");
     else A.toast(A.t("e_UPDATE_OFFLINE") + " " + (j.error || ""), "bad");
-  };
+  }
 
   /* ---------- search ---------- */
   let searchTimer = null, searchSeq = 0;
@@ -656,6 +666,8 @@
     S.ocrLangs = st.ocrLangs || {};
     S.version = st.version || "";
     S.packaged = !!st.packaged;
+    S.updateCheck = !!st.updateCheck;
+    $("#updateBtn").classList.toggle("hidden", S.packaged); // the Store updates its own copy, and its rules allow no second way
     S.os = st.os || "";
     $("#app").classList.toggle("night", S.night);
     rebuildChrome();
@@ -668,6 +680,7 @@
       else if (b && (b.error === "NEED_PASSWORD")) askPassword(b.path, b.name, false);
     }
     document.body.classList.add("ready");
+    if (S.updateCheck) { A.lookForUpdate(false); setInterval(() => A.lookForUpdate(false), 6 * 3600 * 1000); }
   }
 
   /* tooltips for icon buttons (one shared bubble) */

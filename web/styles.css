@@ -365,6 +365,10 @@ body.ready #app { opacity: 1; transition: opacity 0.2s; }
 .icon-btn.sm { width: 30px; height: 30px; border-radius: 8px; }
 .icon-btn.xs { width: 24px; height: 24px; border-radius: 6px; }
 .icon-btn.danger:hover:not(:disabled) { color: var(--danger); background: rgba(251, 113, 133, 0.1); }
+/* a newer version is out: the update button turns green and carries a dot */
+#updateBtn { position: relative; }
+#updateBtn.has-update { color: var(--good); }
+#updateBtn.has-update::after { content: ""; position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
 
 .lnk {
   display: inline-flex;

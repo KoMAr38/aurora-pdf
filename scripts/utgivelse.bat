@@ -14,7 +14,7 @@ rem no quote at the start of the command: for /f would strip it and break the ca
 for /f "delims=" %%v in ('.venv\Scripts\python.exe -c "from core.paths import VERSION; print(VERSION)"') do set "V=%%v"
 if not defined V goto :fail
 echo   Legger ut v%V% på GitHub
-gh release create "v%V%" "Installer\install.exe" "Installer\uninstall.exe" --title "Aurora PDF %V%" --generate-notes || goto :fail
+gh release create "v%V%" "install.exe" "uninstall.exe" --title "Aurora PDF %V%" --generate-notes || goto :fail
 echo.
 echo   Ferdig: v%V% ligger på GitHub, og «Se etter oppdateringer» i programmet finner den.
 pause

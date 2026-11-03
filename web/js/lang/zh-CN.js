@@ -556,5 +556,6 @@ Aurora.addLang("zh-CN", "简体中文", {
   "upToDate": "已是最新版本（{v}）。",
   "updateAvailable": "新版本 {v} 可用。是否下载并安装？Aurora PDF 将关闭并重新启动。",
   "updateInstall": "下载并安装",
-  "e_UPDATE_OFFLINE": "无法连接到 GitHub。请检查网络连接。"
+  "e_UPDATE_OFFLINE": "无法连接到 GitHub。请检查网络连接。",
+  "updateReady": "新版本 {v} 可用。"
 });

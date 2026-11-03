@@ -73,3 +73,11 @@ def test_the_store_copy_never_updates_itself(monkeypatch):
     api.packaged = True
     assert api.dispatch("state", {})["packaged"] is True
     assert api.dispatch("update_start", {})["error"] == "NOT_ALLOWED"
+
+
+def test_the_program_asks_github_by_itself_only_in_the_copy_from_install_exe():
+    assert Api(Session(), Dialogs()).dispatch("state", {})["updateCheck"] is True
+    store = Api(Session(), Dialogs())
+    store.packaged = True
+    assert store.dispatch("state", {})["updateCheck"] is False
+    assert Api(Session(), Dialogs(), test_mode=True).dispatch("state", {})["updateCheck"] is False  # tests stay offline

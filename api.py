@@ -302,6 +302,8 @@ class Api:
             "jobs": self._jobs.running(),
             "version": VERSION,
             "packaged": self.packaged,
+            # the page asks GitHub on start and every 6 hours; never in the Store copy, never in tests
+            "updateCheck": not self.packaged and not self._test_mode,
             "os": f"{platform.system()} {platform.release()} ({platform.version()})",
         }
 
