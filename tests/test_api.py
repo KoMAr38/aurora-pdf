@@ -404,7 +404,7 @@ def test_annotation_round_trip(api, tmp_path):
 
 def api_server_info(api, rev):
     srv = AppServer(api, api.s, WEB_DIR)
-    return srv.page_info(rev)
+    return srv.page_info(rev)[0]
 
 
 def test_forms_through_api(api, tmp_path):
@@ -867,6 +867,27 @@ def test_failed_save_as_leaves_the_original_alone(api, tmp_path):
     answers(api, path)  # the original picked in the Save As dialog
     assert call(api, "save_as")["error"] == "SAVE_AS_COPY"
     assert pt.load_for_editing(path, "owner1")[1]["owner"]
+
+
+def test_page_info_seen_during_a_job_is_not_kept_for_undo(tmp_path):
+    session = Session()
+    srv = AppServer(Api(session, Dialogs()), session, WEB_DIR)
+    try:
+        session.open(save_tmp(make_doc(1), tmp_path, "job.pdf"))
+        rev = session.revs[0]
+
+        def change(page):  # like OCR: the page changes now, its revision only when the job ends
+            page.insert_text((50, 300), "added-by-job")
+            assert "added-by-job" in [w[5] for w in json.loads(srv.page_info(rev)[0])["words"]]
+            return True
+
+        session.run_pages("ocr", [0], change)
+        session.undo()
+        assert session.revs[0] == rev
+        assert "added-by-job" not in [w[5] for w in json.loads(srv.page_info(rev)[0])["words"]]
+    finally:
+        srv.httpd.server_close()
+        session.close()
 
 
 def test_exports_never_overwrite_files(api, tmp_path):

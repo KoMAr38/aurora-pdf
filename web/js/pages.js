@@ -340,12 +340,13 @@
         if (t == null || !t.trim()) return;
         toc[k][1] = t.trim();
       }
+      renderOutline(); // rows match toc again before a second (double) click reads data-k
       saveToc();
     };
   }
   async function saveToc() {
     const r = await A.edit("toc_set", { items: toc });
-    if (r) { toc = r.items; renderOutline(); }
+    if (r) { toc = r.items; renderOutline(); } else A.loadOutline();
   }
   A.addBookmark = async () => {
     if (!S.doc) return;
@@ -353,7 +354,7 @@
     const title = await A.prompt(A.t("addBookmark"), A.t("bookmarkTitle"), `${A.t("page")} ${S.current + 1}`);
     if (title == null || !title.trim()) return;
     const at = toc.findIndex((e) => e[2] > S.current);
-    const entry = [1, title.trim(), S.current];
+    const entry = [at < 0 ? 1 : toc[at][0], title.trim(), S.current]; // the level of the entry it goes before
     if (at < 0) toc.push(entry); else toc.splice(at, 0, entry);
     saveToc();
   };

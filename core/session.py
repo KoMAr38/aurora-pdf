@@ -379,7 +379,7 @@ class Session:
             if self.job == label and self._job_thread is None:
                 self.job = None
 
-    def run_pages(self, label: str, pages, fn, progress=None, right: str = "modify", reserved=None) -> list[int]:
+    def run_pages(self, label: str, pages, fn, progress=None, reserved=None) -> list[int]:
         """Apply ``fn(page) -> bool changed`` page by page as ONE undo step.
 
         The lock is released between pages so the viewer keeps rendering; other edits are
@@ -390,7 +390,7 @@ class Session:
                 self.release_job(label)
                 if (self.doc_id, self.state) != tuple(reserved):
                     raise SessionError("STALE")  # another document, or this one changed (closed meanwhile)
-            self.require(right)
+            self.require("modify")
             if self.job:
                 raise SessionError("BUSY")
             snap = self._snapshot(label)
@@ -504,13 +504,10 @@ class Session:
                 "redo": self.redo_stack[-1].label if self.redo_stack else "",
                 "protected": bool(self.protection),
                 "owner": bool(self.info.get("owner", True)) if self.protection else True,
-                "needPasswords": self.protection is not None and prot.get("user_pw") is None,
                 "algorithm": prot.get("algorithm") or "",
                 "rights": dict(self.rights),
                 "signed": self.signed,
                 "forms": self.forms,
                 "scanned": self.scanned,
                 "xfa": self.xfa,
-                "busy": self.job or "",
-                "meta": pt.get_metadata(self.doc),
             }

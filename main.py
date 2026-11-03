@@ -200,6 +200,7 @@ def main() -> int:
     api = Api(session, test_mode=test_mode)
     # files to open: plain arguments, except the port file that follows --serve
     api.boot_files = [a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] != "--serve")]
+    api.packaged = sys.platform.startswith("win") and packaged()
     server = AppServer(api, session, WEB_DIR).start()
     if test_mode:  # end-to-end tests: publish the URL and serve until killed
         with open(args[args.index("--serve") + 1], "w", encoding="utf-8") as f:

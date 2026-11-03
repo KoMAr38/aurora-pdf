@@ -540,7 +540,6 @@ Aurora.addLang("fi", "Suomi", {
   "licenseLnk": "Lisenssi",
   "thirdParty": "Kolmannen osapuolen ilmoitukset",
   "version": "Versio",
-  "noDoc": "Avaa ensin asiakirja.",
   "feedback": "Ilmoita ongelmasta tai ehdota toimintoa",
   "fbBug": "Ongelma",
   "fbIdea": "Ehdotus",
@@ -552,5 +551,10 @@ Aurora.addLang("fi", "Suomi", {
   "fbGithub": "Avaa GitHubissa",
   "fbEmpty": "Kirjoita ensin kuvaus.",
   "e_UNDO_DAMAGED": "Kumoamisvaihetta ei voitu lukea, joten se poistettiin. Asiakirja on ennallaan.",
-  "imagesSkipped": "Ohitetut kuvat, koska ne ovat liian suuria: {n}"
+  "imagesSkipped": "Ohitetut kuvat, koska ne ovat liian suuria: {n}",
+  "checkUpdates": "Tarkista päivitykset",
+  "upToDate": "Sinulla on uusin versio ({v}).",
+  "updateAvailable": "Versio {v} on saatavilla. Ladataanko ja asennetaanko se? Aurora PDF sulkeutuu ja käynnistyy uudelleen.",
+  "updateInstall": "Lataa ja asenna",
+  "e_UPDATE_OFFLINE": "GitHubiin ei saatu yhteyttä. Tarkista internetyhteys."
 });

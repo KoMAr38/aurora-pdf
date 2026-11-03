@@ -540,7 +540,6 @@ Aurora.addLang("zh-CN", "简体中文", {
   "licenseLnk": "许可证",
   "thirdParty": "第三方声明",
   "version": "版本",
-  "noDoc": "请先打开文档。",
   "feedback": "报告问题或建议新功能",
   "fbBug": "问题",
   "fbIdea": "建议",
@@ -552,5 +551,10 @@ Aurora.addLang("zh-CN", "简体中文", {
   "fbGithub": "在 GitHub 上打开",
   "fbEmpty": "请先填写描述。",
   "e_UNDO_DAMAGED": "无法读取该撤消步骤，已将其移除。文档未更改。",
-  "imagesSkipped": "因过大而跳过的图像：{n}"
+  "imagesSkipped": "因过大而跳过的图像：{n}",
+  "checkUpdates": "检查更新",
+  "upToDate": "已是最新版本（{v}）。",
+  "updateAvailable": "新版本 {v} 可用。是否下载并安装？Aurora PDF 将关闭并重新启动。",
+  "updateInstall": "下载并安装",
+  "e_UPDATE_OFFLINE": "无法连接到 GitHub。请检查网络连接。"
 });

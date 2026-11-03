@@ -143,6 +143,11 @@
   };
 
   A.can = (right) => !!(S.doc && (!S.doc.rights || S.doc.rights[right] !== false));
+  // the author's copy ban covers Ctrl+C on the text layer too, not only the copy button
+  document.addEventListener("copy", (e) => {
+    const n = window.getSelection().anchorNode;
+    if (!A.can("copy") && n && n.parentElement && n.parentElement.closest(".tl")) e.preventDefault();
+  });
 
   /* ---------- toasts ---------- */
   A.toast = (msg, kind = "good", action) => {

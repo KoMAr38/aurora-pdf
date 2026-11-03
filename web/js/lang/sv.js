@@ -540,7 +540,6 @@ Aurora.addLang("sv", "Svenska", {
   "licenseLnk": "Licens",
   "thirdParty": "Tredjepartsmeddelanden",
   "version": "Version",
-  "noDoc": "Öppna ett dokument först.",
   "feedback": "Rapportera ett problem eller föreslå en funktion",
   "fbBug": "Problem",
   "fbIdea": "Förslag",
@@ -552,5 +551,10 @@ Aurora.addLang("sv", "Svenska", {
   "fbGithub": "Öppna på GitHub",
   "fbEmpty": "Skriv en beskrivning först.",
   "e_UNDO_DAMAGED": "Ångra-steget kunde inte läsas och togs därför bort. Dokumentet är oförändrat.",
-  "imagesSkipped": "Bilder som hoppades över för att de är för stora: {n}"
+  "imagesSkipped": "Bilder som hoppades över för att de är för stora: {n}",
+  "checkUpdates": "Sök efter uppdateringar",
+  "upToDate": "Du har den senaste versionen ({v}).",
+  "updateAvailable": "Version {v} finns. Vill du ladda ned och installera den? Aurora PDF stängs och startar igen.",
+  "updateInstall": "Ladda ned och installera",
+  "e_UPDATE_OFFLINE": "Det gick inte att nå GitHub. Kontrollera internetanslutningen."
 });

@@ -125,17 +125,22 @@ class AppServer:
             self.images.put(key, data)
         return data
 
-    def page_info(self, rev: int) -> bytes | None:
+    def page_info(self, rev: int) -> tuple[bytes, bool] | None:
+        """Overlay JSON for a page revision, and whether it may be cached. A job (OCR) changes
+        pages that get their new revision only when it ends, so nothing it touches is cached."""
         data = self.infos.get(rev)
-        if data is None:
-            with self.session.lock:
-                idx = self.session.page_of_rev(rev)
-                if idx is None:
-                    return None
-                info = an.page_info(self.session.doc[idx])
-            data = json.dumps(info, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if data is not None:
+            return data, True
+        with self.session.lock:
+            idx = self.session.page_of_rev(rev)
+            if idx is None:
+                return None
+            info = an.page_info(self.session.doc[idx])
+            final = not self.session.job
+        data = json.dumps(info, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if final:
             self.infos.put(rev, data)
-        return data
+        return data, final
 
 
 # The pages load nothing but the app's own files and API: a file that slips markup into the interface (a
@@ -223,8 +228,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(200, data, "image/jpeg", IMMUTABLE) if data else self._send(404)
         m = re.fullmatch(r"info/(\d{1,9})\.json", path)
         if m:
-            data = self.app.page_info(int(m.group(1)))
-            return self._send(200, data, "application/json", IMMUTABLE) if data else self._send(404)
+            res = self.app.page_info(int(m.group(1)))
+            if not res:
+                return self._send(404)
+            return self._send(200, res[0], "application/json", IMMUTABLE if res[1] else "no-store")
         m = re.fullmatch(r"sig/([0-9a-f]{12})\.png", path)
         if m:
             try:

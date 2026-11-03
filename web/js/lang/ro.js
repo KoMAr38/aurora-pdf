@@ -540,7 +540,6 @@ Aurora.addLang("ro", "Română", {
   "licenseLnk": "Licență",
   "thirdParty": "Notificări privind componentele terțe",
   "version": "Versiune",
-  "noDoc": "Deschideți mai întâi un document.",
   "feedback": "Raportați o problemă sau sugerați o funcție",
   "fbBug": "Problemă",
   "fbIdea": "Sugestie",
@@ -552,5 +551,10 @@ Aurora.addLang("ro", "Română", {
   "fbGithub": "Deschideți pe GitHub",
   "fbEmpty": "Scrieți mai întâi o descriere.",
   "e_UNDO_DAMAGED": "Acest pas de anulare nu a putut fi citit, așa că a fost eliminat. Documentul nu s-a schimbat.",
-  "imagesSkipped": "Imagini omise pentru că sunt prea mari: {n}"
+  "imagesSkipped": "Imagini omise pentru că sunt prea mari: {n}",
+  "checkUpdates": "Caută actualizări",
+  "upToDate": "Aveți cea mai nouă versiune ({v}).",
+  "updateAvailable": "Versiunea {v} este disponibilă. O descărcați și o instalați? Aurora PDF se va închide și va porni din nou.",
+  "updateInstall": "Descarcă și instalează",
+  "e_UPDATE_OFFLINE": "GitHub nu poate fi accesat. Verificați conexiunea la internet."
 });

@@ -27,7 +27,7 @@ function Invoke-Tool($exe, [string[]]$arguments) {
     if ($LASTEXITCODE -ne 0) { throw "$exe failed ($LASTEXITCODE)" }
 }
 
-# 1. the program as a folder of files, the same way 3_BYGG_EXE.bat makes it
+# 1. the program as a folder of files, the same way scripts\bygg.bat makes it for install.exe
 python -m PyInstaller --noconfirm --clean --windowed --name AuroraPDF --icon 'web\assets\aurora.ico' `
     --add-data 'web;web' --add-data 'resources;resources' --collect-submodules fontTools.ttLib.tables main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }

@@ -540,7 +540,6 @@ Aurora.addLang("da", "Dansk", {
   "licenseLnk": "Licens",
   "thirdParty": "Meddelelser fra tredjepart",
   "version": "Version",
-  "noDoc": "Åbn et dokument først.",
   "feedback": "Rapportér et problem eller foreslå en funktion",
   "fbBug": "Problem",
   "fbIdea": "Forslag",
@@ -552,5 +551,10 @@ Aurora.addLang("da", "Dansk", {
   "fbGithub": "Åbn på GitHub",
   "fbEmpty": "Skriv først en beskrivelse.",
   "e_UNDO_DAMAGED": "Fortryd-trinnet kunne ikke læses, så det blev fjernet. Dokumentet er uændret.",
-  "imagesSkipped": "Billeder sprunget over, fordi de er for store: {n}"
+  "imagesSkipped": "Billeder sprunget over, fordi de er for store: {n}",
+  "checkUpdates": "Søg efter opdateringer",
+  "upToDate": "Du har den nyeste version ({v}).",
+  "updateAvailable": "Version {v} er tilgængelig. Vil du hente og installere den? Aurora PDF lukker og starter igen.",
+  "updateInstall": "Hent og installer",
+  "e_UPDATE_OFFLINE": "Kunne ikke få forbindelse til GitHub. Tjek internetforbindelsen."
 });

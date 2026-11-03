@@ -540,7 +540,6 @@ Aurora.addLang("pt", "Português (Portugal)", {
   "licenseLnk": "Licença",
   "thirdParty": "Avisos de terceiros",
   "version": "Versão",
-  "noDoc": "Abra primeiro um documento.",
   "feedback": "Comunicar um problema ou sugerir uma funcionalidade",
   "fbBug": "Problema",
   "fbIdea": "Sugestão",
@@ -552,5 +551,10 @@ Aurora.addLang("pt", "Português (Portugal)", {
   "fbGithub": "Abrir no GitHub",
   "fbEmpty": "Escreva primeiro uma descrição.",
   "e_UNDO_DAMAGED": "Não foi possível ler esse passo de anulação, por isso foi removido. O documento não foi alterado.",
-  "imagesSkipped": "Imagens ignoradas por serem demasiado grandes: {n}"
+  "imagesSkipped": "Imagens ignoradas por serem demasiado grandes: {n}",
+  "checkUpdates": "Procurar atualizações",
+  "upToDate": "Tem a versão mais recente ({v}).",
+  "updateAvailable": "A versão {v} está disponível. Transferir e instalar agora? O Aurora PDF fecha e volta a abrir.",
+  "updateInstall": "Transferir e instalar",
+  "e_UPDATE_OFFLINE": "Não foi possível contactar o GitHub. Verifique a ligação à Internet."
 });
