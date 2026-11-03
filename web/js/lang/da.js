@@ -556,5 +556,6 @@ Aurora.addLang("da", "Dansk", {
   "upToDate": "Du har den nyeste version ({v}).",
   "updateAvailable": "Version {v} er tilgængelig. Vil du hente og installere den? Aurora PDF lukker og starter igen.",
   "updateInstall": "Hent og installer",
-  "e_UPDATE_OFFLINE": "Kunne ikke få forbindelse til GitHub. Tjek internetforbindelsen."
+  "e_UPDATE_OFFLINE": "Kunne ikke få forbindelse til GitHub. Tjek internetforbindelsen.",
+  "updateReady": "Version {v} er tilgængelig."
 });

@@ -556,5 +556,6 @@ Aurora.addLang("fi", "Suomi", {
   "upToDate": "Sinulla on uusin versio ({v}).",
   "updateAvailable": "Versio {v} on saatavilla. Ladataanko ja asennetaanko se? Aurora PDF sulkeutuu ja käynnistyy uudelleen.",
   "updateInstall": "Lataa ja asenna",
-  "e_UPDATE_OFFLINE": "GitHubiin ei saatu yhteyttä. Tarkista internetyhteys."
+  "e_UPDATE_OFFLINE": "GitHubiin ei saatu yhteyttä. Tarkista internetyhteys.",
+  "updateReady": "Versio {v} on saatavilla."
 });

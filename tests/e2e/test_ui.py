@@ -1217,6 +1217,26 @@ def test_closing_the_window_commits_typed_text_first(ui):
     ui.modal_button(ui.t("cancel"))
 
 
+def test_a_newer_release_lights_the_update_button_and_says_so_once(ui):
+    """GitHub's answer is played back: the button in the main window turns green and a line offers the install."""
+    newer = {"ok": True, "newer": True, "version": "9.9.9", "current": "2.2.0", "url": "", "size": 1}
+    ui.page.route("**/api/update_check", lambda route: route.fulfill(json=newer))
+    btn = ui.page.locator("#updateBtn")
+    assert btn.is_visible() and "has-update" not in (btn.get_attribute("class") or "")
+    ui.js("() => Aurora.lookForUpdate(false)")  # what the program does on start and every 6 hours
+    ui.page.wait_for_selector("#updateBtn.has-update")
+    banner = ui.page.locator("#banner:not(.hidden) .bt")
+    assert "9.9.9" in banner.inner_text()
+    ui.page.click("#banner #bnX")
+    ui.js("() => Aurora.lookForUpdate(false)")  # the same version again: the button stays green, no second line
+    ui.page.wait_for_timeout(300)
+    assert ui.page.locator("#banner.hidden").count() == 1 and "has-update" in btn.get_attribute("class")
+    ui.page.click("#updateBtn")  # asked by hand: offers to install it
+    ui.page.wait_for_selector(".scrim:not(.out) .m-foot")
+    assert "9.9.9" in ui.page.locator(".scrim:not(.out) p").inner_text()
+    ui.modal_button(ui.t("cancel"))
+
+
 def test_closing_without_changes_quits_at_once(ui):
     ui.open("plain")
     ui.js("""() => { window.__quit = 0; const rpc = Aurora.rpc;

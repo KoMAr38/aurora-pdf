@@ -556,5 +556,6 @@ Aurora.addLang("sv", "Svenska", {
   "upToDate": "Du har den senaste versionen ({v}).",
   "updateAvailable": "Version {v} finns. Vill du ladda ned och installera den? Aurora PDF stängs och startar igen.",
   "updateInstall": "Ladda ned och installera",
-  "e_UPDATE_OFFLINE": "Det gick inte att nå GitHub. Kontrollera internetanslutningen."
+  "e_UPDATE_OFFLINE": "Det gick inte att nå GitHub. Kontrollera internetanslutningen.",
+  "updateReady": "Version {v} finns."
 });

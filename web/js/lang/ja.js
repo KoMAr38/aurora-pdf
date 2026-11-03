@@ -556,5 +556,6 @@ Aurora.addLang("ja", "日本語", {
   "upToDate": "最新バージョンです（{v}）。",
   "updateAvailable": "バージョン {v} が利用できます。ダウンロードしてインストールしますか？Aurora PDF はいったん終了し、再起動します。",
   "updateInstall": "ダウンロードしてインストール",
-  "e_UPDATE_OFFLINE": "GitHub に接続できませんでした。インターネット接続を確認してください。"
+  "e_UPDATE_OFFLINE": "GitHub に接続できませんでした。インターネット接続を確認してください。",
+  "updateReady": "バージョン {v} が利用できます。"
 });

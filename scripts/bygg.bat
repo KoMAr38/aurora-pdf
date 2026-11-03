@@ -1,6 +1,6 @@
 @echo off
-rem Builds Installer\install.exe and Installer\uninstall.exe (scripts\install.py) around the program
-rem made by PyInstaller. The PC that runs install.exe needs neither Python nor internet.
+rem Builds install.exe and uninstall.exe (scripts\install.py) around the program made by PyInstaller,
+rem next to README.md where people look first. The PC that runs install.exe needs neither Python nor internet.
 setlocal
 chcp 65001 >nul
 title Aurora PDF - bygg install.exe
@@ -32,11 +32,10 @@ copy /y THIRD_PARTY_NOTICES.md "%OUT%\Aurora PDF\" >nul || goto :fail
 echo   Bygger uninstall.exe og install.exe
 %PYI% --onefile --name uninstall --add-data "%ROOT%\scripts\windows.ps1;." "%ROOT%\scripts\install.py" || goto :fail
 %PYI% --onefile --name install --add-data "%ROOT%\scripts\windows.ps1;." --add-data "%OUT%\uninstall.exe;." --add-data "%OUT%\Aurora PDF;app" "%ROOT%\scripts\install.py" || goto :fail
-if not exist "Installer" mkdir "Installer"
-copy /y "%OUT%\install.exe" "Installer\" >nul || goto :fail
-copy /y "%OUT%\uninstall.exe" "Installer\" >nul || goto :fail
+copy /y "%OUT%\install.exe" "%ROOT%\" >nul || goto :fail
+copy /y "%OUT%\uninstall.exe" "%ROOT%\" >nul || goto :fail
 echo.
-echo   Ferdig: Installer\install.exe og Installer\uninstall.exe
+echo   Ferdig: install.exe og uninstall.exe ligger i %ROOT%
 if not defined NOPAUSE pause
 exit /b 0
 

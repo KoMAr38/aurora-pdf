@@ -593,6 +593,7 @@ window.Aurora = window.Aurora || {};
     ["updateAvailable", "Dostupna je verzija {v}. Preuzeti je i instalirati? Aurora PDF će se zatvoriti i ponovo pokrenuti.", "Version {v} is available. Download and install it? Aurora PDF closes and starts again.", "Versjon {v} er tilgjengelig. Vil du laste den ned og installere den? Aurora PDF lukkes og starter igjen."],
     ["updateInstall", "Preuzmi i instaliraj", "Download and install", "Last ned og installer"],
     ["e_UPDATE_OFFLINE", "GitHub nije dostupan. Proveri internet vezu.", "Could not reach GitHub. Check the internet connection.", "Fikk ikke kontakt med GitHub. Sjekk internettforbindelsen."],
+    ["updateReady", "Dostupna je nova verzija {v}.", "Version {v} is available.", "Versjon {v} er tilgjengelig."],
     ["feedback", "Prijavi problem ili predloži novu funkciju", "Report a problem or suggest a feature", "Meld fra om en feil eller foreslå noe nytt"],
     ["fbBug", "Problem", "Problem", "Feil"],
     ["fbIdea", "Predlog", "Idea", "Forslag"],

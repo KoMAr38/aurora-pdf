@@ -12,7 +12,7 @@
   IgnorableNamespaces="uap uap3 desktop rescap">
 
   <Identity Name="Klarbro.AuroraPDF" Publisher="CN=ABCD4F51-5874-4743-8D74-A26747A39107"
-            Version="2.1.0.0" ProcessorArchitecture="x64"/>
+            Version="2.2.0.0" ProcessorArchitecture="x64"/>
 
   <Properties>
     <DisplayName>Aurora PDF</DisplayName>

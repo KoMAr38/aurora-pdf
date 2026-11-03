@@ -556,5 +556,6 @@ Aurora.addLang("pt", "Português (Portugal)", {
   "upToDate": "Tem a versão mais recente ({v}).",
   "updateAvailable": "A versão {v} está disponível. Transferir e instalar agora? O Aurora PDF fecha e volta a abrir.",
   "updateInstall": "Transferir e instalar",
-  "e_UPDATE_OFFLINE": "Não foi possível contactar o GitHub. Verifique a ligação à Internet."
+  "e_UPDATE_OFFLINE": "Não foi possível contactar o GitHub. Verifique a ligação à Internet.",
+  "updateReady": "A versão {v} está disponível."
 });

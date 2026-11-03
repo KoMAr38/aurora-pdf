@@ -4,9 +4,11 @@
 
 **Et skrivebordsprogram for å lese, kommentere, fylle ut, signere og passordbeskytte PDF-filer. Alt skjer på egen maskin, uten konto og uten opplasting.**
 
+**[⬇ Last ned Aurora PDF (install.exe)](https://github.com/KoMAr38/aurora-pdf/releases/latest/download/install.exe)** · [uninstall.exe](https://github.com/KoMAr38/aurora-pdf/releases/latest/download/uninstall.exe) · eller fra Microsoft Store
+
 Et porteføljeprosjekt utenfor Power BI. Målet var et program for daglig bruk med de samme funksjonene som Adobe Acrobat Reader, der passordbeskyttelse og vannmerke var viktigst.
 
-Programmet har 512 automatiske tester. 78 av dem styrer det ekte grensesnittet med mus og tastatur.
+Programmet har 514 automatiske tester. 79 av dem styrer det ekte grensesnittet med mus og tastatur.
 
 ![Kommentarer tegnet med musen på en kvartalsrapport](docs/bilder/oversikt.png)
 
@@ -87,9 +89,9 @@ Koden er rundt 6 800 linjer Python, 4 200 linjer JavaScript og 1 500 linjer CSS.
 | `tests/test_api.py` | 106 | API-et slik grensesnittet bruker det: lagring, beskyttelse, signering, angre, feilkoder, jobber, fildialoger, HTTP-serveren, installasjonssjekken, språket ved første start og at snarveiene har samme oppgavelinje-ID som vinduet |
 | `tests/test_ocr_sign.py` | 23 | OCR med språkdataene som følger med, digitale ID-er, signering, endringer etter signering, også i beskyttede filer, tidsstempler og langtidsdata |
 | `tests/test_i18n.py` | 5 | Oversettelsene på alle 23 språk, også fildialogene og filnavnene |
-| `tests/test_update.py` | 4 | «Se etter oppdateringer» mot svar fra GitHub Releases: nyere og eldre versjon, ingen utgivelse ennå, uten nett, bare filer fra dette prosjektet, og aldri i Store-kopien |
+| `tests/test_update.py` | 5 | Oppdateringsknappen mot svar fra GitHub Releases: nyere og eldre versjon, ingen utgivelse ennå, uten nett, bare filer fra dette prosjektet, og aldri i Store-kopien |
 | `tests/test_install.py` | 1 | At `install.exe` kjenner igjen sin egen mappe, også etter en avinstallering som stoppet halvveis |
-| `tests/e2e/test_ui.py` | 78 | Grensesnittet, styrt med mus og tastatur |
+| `tests/e2e/test_ui.py` | 79 | Grensesnittet, styrt med mus og tastatur |
 
 Noen av testene:
 
@@ -144,7 +146,7 @@ Fra Microsoft Store, eller med `install.exe` fra [Releases](https://github.com/K
 
 `install.exe` har programmet i seg og trenger verken Python eller nett. Den legger programmet i `%LOCALAPPDATA%\Programs\Aurora PDF`, kjører installasjonssjekken, lager snarveier på skrivebordet og i Start-menyen, tar Aurora PDF med under «Åpne med», i Standardapper og i Innstillinger > Apper, og starter programmet. `uninstall.exe` fjerner alt dette igjen. Innstillinger, signaturer og digitale ID-er blir liggende. Krever Windows 10 eller 11 med Microsoft Edge WebView2, som følger med Windows 11.
 
-**Oppdateringer.** I kopien fra `install.exe` henter ⋯ → «Se etter oppdateringer» den nyeste `install.exe` fra Releases, og installasjonen bytter ut programmet og starter det igjen. Store-kopien oppdateres av Store, og der finnes ikke knappen. En ny versjon legges ut med `scripts\utgivelse.bat`, etter at versjonsnummeret er hevet i `core\paths.py` og `packaging\AppxManifest.xml`. `scripts\bygg.bat` lager bare de to filene i `Installer\`.
+**Oppdateringer.** I kopien fra `install.exe` spør programmet GitHub om nyeste versjon når det starter og hver sjette time. Det sender bare sitt eget versjonsnummer; GitHub ser IP-adressen som ved et vanlig nettbesøk, og ingenting om deg eller filene dine forlater maskinen. Finnes en nyere versjon, blir oppdateringsknappen øverst til høyre grønn og en linje sier fra. Knappen kan også trykkes når som helst. Den henter den nyeste `install.exe` fra Releases, og installasjonen bytter ut programmet og starter det igjen. Store-kopien oppdateres av Store, og der finnes verken knappen eller spørsmålet til GitHub. En ny versjon legges ut med `scripts\utgivelse.bat`, etter at versjonsnummeret er hevet i `core\paths.py` og `packaging\AppxManifest.xml`. `scripts\bygg.bat` lager bare de to filene, rett i prosjektmappen.
 
 Resten står i `START_HER.md`.
 

@@ -556,5 +556,6 @@ Aurora.addLang("ro", "Română", {
   "upToDate": "Aveți cea mai nouă versiune ({v}).",
   "updateAvailable": "Versiunea {v} este disponibilă. O descărcați și o instalați? Aurora PDF se va închide și va porni din nou.",
   "updateInstall": "Descarcă și instalează",
-  "e_UPDATE_OFFLINE": "GitHub nu poate fi accesat. Verificați conexiunea la internet."
+  "e_UPDATE_OFFLINE": "GitHub nu poate fi accesat. Verificați conexiunea la internet.",
+  "updateReady": "Versiunea {v} este disponibilă."
 });
